@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import PictureDivideCore
 
 struct VaultView: View {
     @EnvironmentObject private var state: AppState

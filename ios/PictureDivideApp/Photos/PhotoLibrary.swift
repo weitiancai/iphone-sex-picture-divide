@@ -101,7 +101,7 @@ enum PhotoLibrary {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             PHPhotoLibrary.shared().performChanges({
                 let request = PHAssetCreationRequest.creationRequestForAssetFromImage(atFileURL: tempURL)
-                request.creationDate = Date()
+                request?.creationDate = Date()
             }) { success, error in
                 if success {
                     continuation.resume(returning: ())

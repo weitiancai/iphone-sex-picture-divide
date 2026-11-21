@@ -1,6 +1,7 @@
 import Photos
 import SwiftUI
 import UIKit
+import PictureDivideCore
 
 struct ScanView: View {
     @EnvironmentObject private var state: AppState

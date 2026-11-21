@@ -1,6 +1,7 @@
 import Foundation
 import Photos
 import UIKit
+import PictureDivideCore
 
 /// 一张被判定为敏感的相册资源。
 struct FlaggedItem: Identifiable, Hashable {

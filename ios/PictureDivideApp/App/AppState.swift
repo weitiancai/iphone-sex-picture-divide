@@ -43,7 +43,13 @@ final class AppState: ObservableObject {
 
     private func loadDetector() {
         if detector == nil {
-            detector = try? ModeratorDetector.loadFromDisk()
+            do {
+                let loaded = try ModeratorDetector.loadFromDisk()
+                detector = loaded
+                NSLog("[PictureDivide] 模型加载成功：%@", loaded.engine.rawValue)
+            } catch {
+                NSLog("[PictureDivide] 模型加载失败：%@", error.localizedDescription)
+            }
         }
     }
 

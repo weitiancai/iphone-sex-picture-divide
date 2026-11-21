@@ -60,7 +60,6 @@ public final class KeychainKeyStore {
             // 需要 Face ID / Touch ID 才能取出密钥。
             let context = LAContextFactory.makeContext(reason: "解锁隐私保险箱")
             query[kSecUseAuthenticationContext as String] = context
-            query[kSecUseOperationPrompt as String] = "解锁隐私保险箱"
         }
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
