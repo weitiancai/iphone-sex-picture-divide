@@ -1,0 +1,80 @@
+[
+  {
+    "shortDescription" : "Moderator: on-device NSFW image detection. Scores five region heads.",
+    "metadataOutputVersion" : "3.0",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 5)",
+        "shortDescription" : "Sigmoid per head: nipples_visible, genitals_visible, buttocks_visible, nude, sex_act",
+        "shape" : "[1, 5]",
+        "name" : "scores",
+        "type" : "MultiArray"
+      }
+    ],
+    "version" : "1.0.0",
+    "modelParameters" : [
+
+    ],
+    "author" : "Desert Ant Labs",
+    "specificationVersion" : 7,
+    "storagePrecision" : "Mixed (Float16, Int8)",
+    "license" : "Desert Ant Labs Source-Available License v1.0 (https:\/\/license.desertant.com\/1.0)",
+    "mlProgramOperationTypeHistogram" : {
+      "Ios16.gelu" : 1,
+      "Ios16.mul" : 1,
+      "Ios16.constexprAffineDequantize" : 62,
+      "Transpose" : 1,
+      "Ios16.sigmoid" : 1,
+      "Ios16.reduceMean" : 1,
+      "Ios16.add" : 18,
+      "Ios16.relu" : 38,
+      "Tile" : 1,
+      "Ios16.reduceL2Norm" : 1,
+      "Ios16.maximum" : 1,
+      "Ios16.conv" : 77,
+      "Ios16.batchNorm" : 1,
+      "Ios16.realDiv" : 1,
+      "Ios16.reshape" : 1,
+      "Ios16.linear" : 2
+    },
+    "computePrecision" : "Mixed (Float16, Int32)",
+    "stateSchema" : [
+
+    ],
+    "isUpdatable" : "0",
+    "availability" : {
+      "macOS" : "13.0",
+      "tvOS" : "16.0",
+      "visionOS" : "1.0",
+      "watchOS" : "9.0",
+      "iOS" : "16.0",
+      "macCatalyst" : "16.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 384 × 384 × 3)",
+        "shortDescription" : "RGB pixels 0...255, NHWC [1, 384, 384, 3]. Normalization is in the graph.",
+        "shape" : "[1, 384, 384, 3]",
+        "name" : "image",
+        "type" : "MultiArray"
+      }
+    ],
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-09-23",
+      "heads" : "[\"nipples_visible\", \"genitals_visible\", \"buttocks_visible\", \"nude\", \"sex_act\"]",
+      "com.github.apple.coremltools.source" : "milinternal",
+      "com.github.apple.coremltools.version" : "9.0"
+    },
+    "generatedClassName" : "moderator",
+    "method" : "predict"
+  }
+]

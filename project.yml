@@ -1,0 +1,95 @@
+name: PictureDivide
+options:
+  bundleIdPrefix: com.picturedivide
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+packages:
+  PictureDivideCore:
+    path: Packages/PictureDivideCore
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "1,2"
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+
+targets:
+  PictureDivide:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ios/PictureDivideApp
+        excludes:
+          - "Support/Info.plist"
+      # 已编译的 CoreML 模型：作为「文件夹引用」原样拷贝进 App bundle，
+      # 运行时用 MLModel(contentsOf:) 加载。
+      - path: Resources/Moderator.mlmodelc
+        type: folder
+    info:
+      path: ios/PictureDivideApp/Support/Info.plist
+      properties:
+        CFBundleDisplayName: 分流相册
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        ITSAppUsesNonExemptEncryption: false
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSPhotoLibraryUsageDescription: 需要读取你的照片来在设备本地识别露骨/私密内容，并把命中的照片移进加密保险箱。照片不会离开这台设备。
+        NSPhotoLibraryAddUsageDescription: 需要把保险箱里的照片恢复回系统相册。
+        NSFaceIDUsageDescription: 需要 Face ID 来解锁加密保险箱，确认只有你本人能查看这些照片。
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.picturedivide.app
+        PRODUCT_NAME: PictureDivide
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: true
+        GENERATE_INFOPLIST_FILE: NO
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+        Release:
+          SWIFT_COMPILATION_MODE: wholemodule
+    dependencies:
+      - package: PictureDivideCore
+        product: PictureDivideCore
+
+  PictureDivideTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Packages/PictureDivideCore/Tests/PictureDivideCoreTests
+    dependencies:
+      - package: PictureDivideCore
+        product: PictureDivideCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.picturedivide.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  PictureDivide:
+    build:
+      targets:
+        PictureDivide: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - PictureDivideTests
+    archive:
+      config: Release

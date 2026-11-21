@@ -1,0 +1,11 @@
+# 构建产物
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# XcodeGen 生成物（用 Scripts/bootstrap.sh 重新生成）
+PictureDivide.xcodeproj/
+
+# macOS
+.DS_Store
