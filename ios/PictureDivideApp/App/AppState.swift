@@ -17,7 +17,13 @@ final class AppState: ObservableObject {
     @Published var flagged: [FlaggedItem] = []
     @Published var policy: ScanPolicy = .standard
     @Published var quality: ModeratorDetector.Quality = .accurate
+    @Published var engineOption: EngineOption = .moderator
+    /// 自定义触发阈值（0.3 ~ 0.9）。调高 = 误报更少、漏报更多。
+    @Published var threshold: Double = 0.5
     @Published var scanRange: ScanRange = .last30Days
+    /// 自定义区间的起始月 / 结束月。
+    @Published var customStart: Date = Calendar.current.date(byAdding: .month, value: -3, to: Date()) ?? Date()
+    @Published var customEnd: Date = Date()
     @Published var scanError: String?
     @Published var lastScanFinishedAt: Date?
 
@@ -40,8 +46,31 @@ final class AppState: ObservableObject {
         authorization = PhotoLibrary.authorizationStatus()
         loadDetector()
         refreshVaultItems()
+
+        // 命令行/自动化参数：
+        //   --autoscan                     启动即扫描
+        //   --engine <moderator|openNSFW|both>
+        //   --threshold <0.3...0.9>
+        //   --policy <standard|strict|allowTopless>
+        let args = ProcessInfo.processInfo.arguments
+        if let index = args.firstIndex(of: "--engine"), index + 1 < args.count,
+           let option = EngineOption(rawValue: args[index + 1]) {
+            engineOption = option
+        }
+        if let index = args.firstIndex(of: "--threshold"), index + 1 < args.count,
+           let value = Double(args[index + 1]) {
+            threshold = value
+        }
+        if let index = args.firstIndex(of: "--policy"), index + 1 < args.count,
+           let value = ScanPolicy(rawValue: args[index + 1]) {
+            policy = value
+        }
+        loadDetector()
+        NSLog("[PictureDivide] 当前配置：engine=%@ threshold=%.2f policy=%@ quality=%@",
+              engineOption.rawValue, threshold, policy.rawValue, quality.rawValue)
+
         // 调试/自动化用：启动参数 --autoscan 会自动开扫，方便命令行验证。
-        if ProcessInfo.processInfo.arguments.contains("--autoscan") {
+        if args.contains("--autoscan") {
             if authorization == .notDetermined {
                 await requestAccess()
             }
@@ -52,17 +81,24 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// 重新加载检测模型（切换扫描速度时调用）。
+    /// 重新加载检测模型（切换扫描速度 / 引擎时调用）。
     func reloadDetector() {
         loadDetector()
     }
 
     private func loadDetector() {
-        if let current = detector as? ModeratorDetector, current.quality == quality { return }
+        if let current = detector as? CompositeDetector,
+           current.mode == engineOption,
+           (current.moderatorQuality == quality) {
+            return
+        }
         do {
-            let loaded = try ModeratorDetector.loadFromDisk(quality: quality)
-            detector = loaded
-            NSLog("[PictureDivide] 模型加载成功：%@（%@）", loaded.engine.rawValue, quality.rawValue)
+            let moderator = try? ModeratorDetector.loadFromDisk(quality: quality)
+            let openNSFW = try? OpenNSFWDetector.loadFromDisk()
+            let composite = CompositeDetector(mode: engineOption, moderator: moderator, openNSFW: openNSFW)
+            detector = composite
+            NSLog("[PictureDivide] 模型加载：%@（moderator=%@, open_nsfw=%@）",
+                  engineOption.rawValue, moderator == nil ? "无" : "有", openNSFW == nil ? "无" : "有")
         } catch {
             NSLog("[PictureDivide] 模型加载失败：%@", error.localizedDescription)
         }
@@ -71,7 +107,8 @@ final class AppState: ObservableObject {
     var engineDescription: String {
         guard let detector else { return "模型未加载" }
         switch detector.engine {
-        case .moderator: return "内置模型 Moderator（离线）"
+        case .moderator: return "内置模型 Moderator（离线，区域级）"
+        case .openNSFW: return "内置模型 open_nsfw（离线，分类级）"
         case .appleSensitive: return "系统 SensitiveContentAnalysis"
         }
     }
@@ -102,7 +139,9 @@ final class AppState: ObservableObject {
 
         scanTask = Task { [weak self] in
             guard let self else { return }
-            let assets = Self.fetchAssets(range: range)
+            let start = range == .custom ? ScanRange.monthStart(self.customStart) : range.startDate
+            let end = range == .custom ? ScanRange.monthEnd(self.customEnd) : nil
+            let assets = Self.fetchAssets(start: start, end: end)
             await MainActor.run { self.progress.total = assets.count }
 
             var found: [FlaggedItem] = []
@@ -110,8 +149,9 @@ final class AppState: ObservableObject {
                 if Task.isCancelled { break }
                 guard let cgImage = await PhotoLibrary.cgImage(for: asset) else { continue }
                 do {
-                    let result = try await detector.detect(image: cgImage, policy: policy)
+                    let result = try await detector.detect(image: cgImage, policy: policy, threshold: threshold)
                     if result.isSensitive {
+                        NSLog("[PictureDivide] 命中：score=%.3f %@", result.score, result.extra ?? result.regions.detectedParts.joined(separator: "/"))
                         let thumbnail = await PhotoLibrary.thumbnail(for: asset)
                         let preview = await PhotoLibrary.preview(for: asset)
                         found.append(FlaggedItem(id: asset.localIdentifier,
@@ -151,11 +191,16 @@ final class AppState: ObservableObject {
         progress.isRunning = false
     }
 
-    private nonisolated static func fetchAssets(range: ScanRange) -> [PHAsset] {
+    private nonisolated static func fetchAssets(start: Date?, end: Date?) -> [PHAsset] {
         let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-        if let start = range.startDate {
+        if let start, let end {
+            options.predicate = NSPredicate(format: "creationDate >= %@ AND creationDate <= %@",
+                                            start as NSDate, end as NSDate)
+        } else if let start {
             options.predicate = NSPredicate(format: "creationDate >= %@", start as NSDate)
+        } else if let end {
+            options.predicate = NSPredicate(format: "creationDate <= %@", end as NSDate)
         }
         let result = PHAsset.fetchAssets(with: .image, options: options)
         var assets: [PHAsset] = []

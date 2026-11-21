@@ -35,6 +35,8 @@ public struct DetectionResult: Codable, Equatable, Sendable {
     public enum Engine: String, Codable, Sendable {
         /// 随 App 打包的 CoreML 模型（Moderator v1.0.0），区域级、无需任何 entitlement。
         case moderator
+        /// Yahoo open_nsfw，分类级（porn/hentai/sexy），误报通常更少。
+        case openNSFW
         /// Apple 系统框架 SensitiveContentAnalysis，需要 entitlement + 系统开关。
         case appleSensitive
     }
@@ -47,11 +49,14 @@ public struct DetectionResult: Codable, Equatable, Sendable {
     public var isSensitive: Bool
     /// 使用哪个引擎得出。
     public var engine: Engine
+    /// 附加信息（模型的原始输出，方便排查误报）。
+    public var extra: String?
 
-    public init(score: Double, regions: RegionScores, isSensitive: Bool, engine: Engine) {
+    public init(score: Double, regions: RegionScores, isSensitive: Bool, engine: Engine, extra: String? = nil) {
         self.score = score
         self.regions = regions
         self.isSensitive = isSensitive
         self.engine = engine
+        self.extra = extra
     }
 }

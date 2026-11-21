@@ -67,7 +67,7 @@ public final class ModeratorDetector: ContentDetector, @unchecked Sendable {
         throw DetectorError.modelNotFound
     }
 
-    public func detect(image: CGImage, policy: ScanPolicy) async throws -> DetectionResult {
+    public func detect(image: CGImage, policy: ScanPolicy, threshold override: Double? = nil) async throws -> DetectionResult {
         let boxed = SendableImage(cgImage: image)
         let crops = quality.crops
         let useMirrors = quality.useMirrors
@@ -87,7 +87,7 @@ public final class ModeratorDetector: ContentDetector, @unchecked Sendable {
             return best
         }.value
 
-        let evaluation = policy.evaluate(regions)
+        let evaluation = policy.evaluate(regions, thresholdOverride: override)
         return DetectionResult(score: evaluation.score,
                                regions: regions,
                                isSensitive: evaluation.isSensitive,

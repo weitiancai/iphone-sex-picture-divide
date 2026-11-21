@@ -49,9 +49,11 @@ public enum ScanPolicy: String, Codable, CaseIterable, Sendable {
     }
 
     /// 依据策略计算总分与是否敏感。
-    public func evaluate(_ regions: RegionScores) -> (score: Double, isSensitive: Bool) {
+    /// - Parameter override: 自定义阈值（优先于策略自带阈值）。
+    public func evaluate(_ regions: RegionScores, thresholdOverride: Double? = nil) -> (score: Double, isSensitive: Bool) {
         let scores = participatingScores(regions)
         let score = scores.max() ?? 0
-        return (score, score >= threshold)
+        let limit = thresholdOverride ?? threshold
+        return (score, score >= limit)
     }
 }

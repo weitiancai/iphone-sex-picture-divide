@@ -2,7 +2,7 @@ name: PictureDivide
 options:
   bundleIdPrefix: com.picturedivide
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "17.4"
   createIntermediateGroups: true
   groupSortPosition: top
 
@@ -23,7 +23,7 @@ targets:
   PictureDivide:
     type: application
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "17.4"
     sources:
       - path: ios/PictureDivideApp
         excludes:
@@ -32,6 +32,8 @@ targets:
       # 运行时用 MLModel(contentsOf:) 加载。
       - path: Resources/Moderator.mlmodelc
         type: folder
+      # 备选模型：Yahoo open_nsfw（.mlpackage 由 Xcode 在构建时自动编译成 .mlmodelc）
+      - path: Resources/OpenNSFW.mlpackage
     info:
       path: ios/PictureDivideApp/Support/Info.plist
       properties:
@@ -55,6 +57,9 @@ targets:
         #    或者直接在 Xcode 里改（但那样下次重新生成会被覆盖）。
         #    必须全球唯一，否则报 "Failed to register bundle identifier"。
         PRODUCT_BUNDLE_IDENTIFIER: com.picturedivide.personal
+        # 你的个人 Apple ID 团队（M24ZB9YKNU = "蒙 魏"）。
+        # 换设备/换账号时改这里，然后重新生成工程。
+        DEVELOPMENT_TEAM: M24ZB9YKNU
         PRODUCT_NAME: PictureDivide
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
@@ -75,7 +80,7 @@ targets:
   PictureDivideTests:
     type: bundle.unit-test
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "17.4"
     sources:
       - path: Packages/PictureDivideCore/Tests/PictureDivideCoreTests
     dependencies:

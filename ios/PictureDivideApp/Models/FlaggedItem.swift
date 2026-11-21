@@ -29,6 +29,8 @@ enum ScanRange: String, CaseIterable, Identifiable {
     case last30Days
     case lastYear
     case all
+    /// 自定义：从某月到某月。
+    case custom
 
     var id: String { rawValue }
 
@@ -38,6 +40,7 @@ enum ScanRange: String, CaseIterable, Identifiable {
         case .last30Days: return "最近 30 天"
         case .lastYear: return "最近一年"
         case .all: return "全部照片"
+        case .custom: return "自定义月份区间"
         }
     }
 
@@ -47,8 +50,25 @@ enum ScanRange: String, CaseIterable, Identifiable {
         case .last7Days: return calendar.date(byAdding: .day, value: -7, to: Date())
         case .last30Days: return calendar.date(byAdding: .day, value: -30, to: Date())
         case .lastYear: return calendar.date(byAdding: .year, value: -1, to: Date())
-        case .all: return nil
+        case .all, .custom: return nil
         }
+    }
+
+    /// 自定义区间：起始月第一天 00:00。
+    static func monthStart(_ date: Date) -> Date {
+        let calendar = Calendar.current
+        let comps = calendar.dateComponents([.year, .month], from: date)
+        return calendar.date(from: comps) ?? date
+    }
+
+    /// 自定义区间：结束月最后一天 23:59:59。
+    static func monthEnd(_ date: Date) -> Date {
+        let calendar = Calendar.current
+        let start = monthStart(date)
+        guard let lastDay = calendar.range(of: .day, in: .month, for: start)?.last,
+              let day = calendar.date(byAdding: .day, value: lastDay - 1, to: start) else { return date }
+        let comps = calendar.dateComponents([.year, .month, .day], from: day)
+        return calendar.date(byAdding: .hour, value: 23, to: calendar.date(from: comps) ?? day) ?? date
     }
 }
 

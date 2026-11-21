@@ -48,7 +48,7 @@ public final class AppleSensitiveDetector: ContentDetector, @unchecked Sendable 
         #endif
     }
 
-    public func detect(image: CGImage, policy: ScanPolicy) async throws -> DetectionResult {
+    public func detect(image: CGImage, policy: ScanPolicy, threshold override: Double? = nil) async throws -> DetectionResult {
         #if canImport(SensitiveContentAnalysis)
         guard analyzer.analysisPolicy != .disabled else {
             throw DetectorError.appleFrameworkUnavailable(reason: Self.policyDescription)
