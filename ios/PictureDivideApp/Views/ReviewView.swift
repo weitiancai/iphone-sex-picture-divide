@@ -34,13 +34,13 @@ struct ReviewView: View {
                         }
 
                         if !moved.isEmpty {
-                            Section("已移入保险箱") {
+                            Section("已加入隐私相册") {
                                 ForEach(moved) { item in
                                     HStack {
                                         Image(systemName: "lock.fill")
                                         Text(item.creationDate?.formatted(date: .abbreviated, time: .omitted) ?? item.id)
                                         Spacer()
-                                        Text("已隔离").foregroundStyle(.secondary)
+                                        Text("已加入隐私相册").foregroundStyle(.secondary)
                                     }
                                 }
                             }
@@ -120,6 +120,7 @@ private struct DetailSheet: View {
     let item: FlaggedItem
     @State private var reveal = false
     @State private var working = false
+    @State private var showDeleteConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -159,29 +160,56 @@ private struct DetailSheet: View {
                     Button {
                         working = true
                         Task {
-                            await state.moveToVault(item)
+                            await state.addToPrivateAlbum(item)
                             working = false
                             dismiss()
                         }
                     } label: {
-                        Label(working ? "处理中…" : "移入加密保险箱并删除原图", systemImage: "lock.shield")
+                        Label(working ? "处理中…" : "① 加入隐私相册（保留原图）", systemImage: "lock.shield")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(working)
+
+                    Button(role: .destructive) {
+                        showDeleteConfirm = true
+                    } label: {
+                        Label("② 只删除系统相册原图", systemImage: "trash")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(working)
+
+                    Button {
+                        working = true
+                        Task {
+                            await state.addToPrivateAlbumAndDeleteOriginal(item)
+                            working = false
+                            dismiss()
+                        }
+                    } label: {
+                        Label("③ 加入隐私相册并删除原图", systemImage: "arrow.up.bin")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
                     .disabled(working)
 
                     Button {
                         state.markAsSafe(item)
                         dismiss()
                     } label: {
-                        Label("这是误报（保持原样）", systemImage: "arrow.uturn.backward")
+                        Label("这是误报（什么都不做）", systemImage: "arrow.uturn.backward")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                 }
                 .padding(.horizontal)
 
-                Text("移入保险箱后：照片会被加密存进 App 沙盒（ChaCha20-Poly1305，密钥在 Keychain），系统相册里的原图会被删除（iOS 会保留 30 天「最近删除」，需要你自己清空）。")
+                Text("""
+                ① 加入隐私相册：加密副本存进本 App 的保险箱（ChaCha20-Poly1305，密钥在 Keychain），**系统相册里的原图保持不动**。
+                ② 只删除原图：只删系统相册那一份，保险箱里已有副本的话会标注“原图已删除”。
+                ③ 两者都做：加密存一份 + 删掉系统相册原图（iOS 会保留 30 天“最近删除”，需你自己清空）。
+                """)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal)
@@ -195,6 +223,19 @@ private struct DetailSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("关闭") { dismiss() }
                 }
+            }
+            .confirmationDialog("确定删除系统相册里的原图？", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+                Button("删除原图", role: .destructive) {
+                    working = true
+                    Task {
+                        await state.deleteOriginal(item)
+                        working = false
+                        dismiss()
+                    }
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("这只会删掉系统相册里的那份照片，不会动保险箱里的加密副本。iOS 会在「最近删除」里保留 30 天。")
             }
         }
     }

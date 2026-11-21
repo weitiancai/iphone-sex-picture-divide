@@ -19,6 +19,9 @@ public struct VaultItem: Codable, Identifiable, Equatable, Sendable {
     public var encryptedByteCount: Int
     /// 原始字节数。
     public var originalByteCount: Int
+    /// 系统相册里的原图是否已被删除（nil = 老数据，视为未删除）。
+    /// 可选类型是为了兼容旧版索引文件（缺这个键也能解码）。
+    public var originalDeleted: Bool?
 
     public init(id: UUID = UUID(),
                 originalName: String,
@@ -26,7 +29,8 @@ public struct VaultItem: Codable, Identifiable, Equatable, Sendable {
                 kind: Kind,
                 createdAt: Date = Date(),
                 encryptedByteCount: Int,
-                originalByteCount: Int) {
+                originalByteCount: Int,
+                originalDeleted: Bool? = nil) {
         self.id = id
         self.originalName = originalName
         self.assetIdentifier = assetIdentifier
@@ -34,6 +38,7 @@ public struct VaultItem: Codable, Identifiable, Equatable, Sendable {
         self.createdAt = createdAt
         self.encryptedByteCount = encryptedByteCount
         self.originalByteCount = originalByteCount
+        self.originalDeleted = originalDeleted
     }
 }
 
@@ -76,7 +81,8 @@ public final class VaultStore {
     public func add(data: Data,
                     originalName: String,
                     assetIdentifier: String?,
-                    kind: VaultItem.Kind) throws -> VaultItem {
+                    kind: VaultItem.Kind,
+                    originalDeleted: Bool? = nil) throws -> VaultItem {
         let key = SymmetricKey(data: try keyStore.loadOrCreateKey())
         let sealed = try VaultCrypto.seal(data, key: key)
         let id = UUID()
@@ -90,7 +96,8 @@ public final class VaultStore {
                              assetIdentifier: assetIdentifier,
                              kind: kind,
                              encryptedByteCount: sealed.count,
-                             originalByteCount: data.count)
+                             originalByteCount: data.count,
+                             originalDeleted: originalDeleted)
         var all = try items()
         all.append(item)
         try writeIndex(all)
@@ -103,6 +110,14 @@ public final class VaultStore {
         let blobURL = blobsURL.appendingPathComponent(id.uuidString + ".blob")
         let sealed = try Data(contentsOf: blobURL)
         return try VaultCrypto.open(sealed, key: key)
+    }
+
+    /// 标记“系统相册原图已删除”。
+    public func setOriginalDeleted(id: UUID, deleted: Bool) throws {
+        var all = try items()
+        guard let index = all.firstIndex(where: { $0.id == id }) else { return }
+        all[index].originalDeleted = deleted
+        try writeIndex(all)
     }
 
     public func delete(id: UUID) throws {

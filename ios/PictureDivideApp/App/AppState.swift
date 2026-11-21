@@ -332,24 +332,61 @@ final class AppState: ObservableObject {
 
     // MARK: - 复核操作
 
-    /// 把命中的照片移入加密保险箱，并从系统相册删除原图。
-    func moveToVault(_ item: FlaggedItem) async {
+    /// ① 加入隐私相册（加密保险箱）：**不动系统相册里的原图**。
+    func addToPrivateAlbum(_ item: FlaggedItem) async {
+        do {
+            try await storeIntoVault(item, deleteOriginal: false)
+            mark(item.id, state: .moved)
+            refreshVaultItems()
+        } catch {
+            scanError = error.localizedDescription
+        }
+    }
+
+    /// ② 只删除系统相册里的原图（保险箱里已有副本时，会标记“原图已删除”）。
+    func deleteOriginal(_ item: FlaggedItem) async {
         guard let asset = Self.asset(for: item.id) else {
             scanError = "找不到对应的相册资源（可能已被删除）。"
             return
         }
         do {
-            let raw = try await PhotoLibrary.imageData(for: asset)
-            let clean = PhotoLibrary.stripMetadata(from: raw)
-            _ = try vault.add(data: clean,
-                              originalName: "IMG_\(item.id.suffix(8))",
-                              assetIdentifier: item.id,
-                              kind: .image)
             try await PhotoLibrary.delete(asset: asset)
+            // 如果保险箱里已有这份照片，标记一下
+            if let vaultItem = vaultItems.first(where: { $0.assetIdentifier == item.id }) {
+                try? vault.setOriginalDeleted(id: vaultItem.id, deleted: true)
+            }
             mark(item.id, state: .moved)
             refreshVaultItems()
         } catch {
             scanError = error.localizedDescription
+        }
+    }
+
+    /// ③ 加入隐私相册 + 同时删除系统相册原图（一步到位）。
+    func addToPrivateAlbumAndDeleteOriginal(_ item: FlaggedItem) async {
+        do {
+            try await storeIntoVault(item, deleteOriginal: true)
+            mark(item.id, state: .moved)
+            refreshVaultItems()
+        } catch {
+            scanError = error.localizedDescription
+        }
+    }
+
+    /// 存入保险箱（可选是否删除原图）。
+    private func storeIntoVault(_ item: FlaggedItem, deleteOriginal: Bool) async throws {
+        guard let asset = Self.asset(for: item.id) else {
+            throw NSError(domain: "PictureDivide", code: 1, userInfo: [NSLocalizedDescriptionKey: "找不到对应的相册资源（可能已被删除）。"])
+        }
+        let raw = try await PhotoLibrary.imageData(for: asset)
+        let clean = PhotoLibrary.stripMetadata(from: raw)
+        _ = try vault.add(data: clean,
+                          originalName: "IMG_\(item.id.suffix(8))",
+                          assetIdentifier: item.id,
+                          kind: .image,
+                          originalDeleted: deleteOriginal ? true : nil)
+        if deleteOriginal {
+            try await PhotoLibrary.delete(asset: asset)
         }
     }
 

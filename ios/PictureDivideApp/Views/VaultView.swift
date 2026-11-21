@@ -50,9 +50,14 @@ struct VaultView: View {
                                             .foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    Text(ByteCountFormatter.string(fromByteCount: Int64(item.originalByteCount), countStyle: .file))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        Text(item.originalDeleted == true ? "原图已删除" : "原图仍在相册")
+                                            .font(.caption2)
+                                            .foregroundStyle(item.originalDeleted == true ? .orange : .secondary)
+                                        Text(ByteCountFormatter.string(fromByteCount: Int64(item.originalByteCount), countStyle: .file))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                             }
                             .buttonStyle(.plain)
