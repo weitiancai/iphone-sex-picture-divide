@@ -71,8 +71,12 @@ struct ReviewView: View {
             .fullScreenCover(item: $viewing) { item in
                 FullScreenViewer(items: pending.isEmpty ? [item] : pending,
                                  startID: item.id,
-                                 isBlurred: blurred,
-                                 loadImage: { item in
+                                 isBlurred: false,
+                                 loadPreview: { item in
+                                     if let thumb = item.thumbnail { return thumb }
+                                     return await ThumbnailProvider.shared.thumbnail(for: item.id)
+                                 },
+                                 loadOriginal: { item in
                                      await ThumbnailProvider.shared.original(for: item.id)
                                  },
                                  titleFor: { item in
@@ -158,12 +162,10 @@ struct ReviewView: View {
                 }
             } label: {
                 Label("更多操作", systemImage: "ellipsis.circle")
-                    .font(.footnote)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
         }
-        .tint(.white)
     }
 
     // MARK: - 批量操作条

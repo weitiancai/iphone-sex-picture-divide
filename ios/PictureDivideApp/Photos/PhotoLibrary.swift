@@ -97,6 +97,7 @@ enum PhotoLibrary {
     /// 用 ImageIO 的 thumbnail 接口，只解一次缩略，不整张解码。
     static func originalImage(for asset: PHAsset, maxPixel: CGFloat = 2400) async -> UIImage? {
         guard let data = try? await imageData(for: asset),
+              data.count <= 80 * 1024 * 1024,
               let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
