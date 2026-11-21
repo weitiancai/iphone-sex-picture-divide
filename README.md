@@ -56,8 +56,10 @@ IMG_2317.jpg  score=0.842  sensitive=是  部位=生殖器/裸露  [0.71/0.84/0.
 
 ### 2）装到自己 iPhone（免费）
 
-见 [`docs/build-and-testflight.md`](docs/build-and-testflight.md#2-装到自己-iphone完全免费)：
+见 [`docs/install-to-iphone.md`](docs/install-to-iphone.md)（逐步截图级说明）：
+Xcode 安装 → iPhone 打开开发者模式 → 登录 Apple ID → 改 Bundle ID → ⌘R。
 
+摘要：
 ```bash
 brew install xcodegen          # 或用 Scripts/bootstrap.sh 自动装
 Scripts/bootstrap.sh           # 生成 PictureDivide.xcodeproj
