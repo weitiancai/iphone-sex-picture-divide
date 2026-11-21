@@ -89,6 +89,42 @@ open PictureDivide.xcodeproj
 
 ---
 
+## 第 5.5 步：Xcode 27 上最容易卡的两个坑（先看这里）
+
+### 坑 1：设备列表里没有你的 iPhone / 报 `Developer Mode disabled`
+
+iPhone 16+ / iOS 16+ 强制要求开启开发者模式：
+
+1. iPhone → **设置 → 隐私与安全性 → 开发者模式** → 打开 → **重启手机**
+2. 重启后再进同一位置 → 弹窗点"开启" → 输入锁屏密码
+3. 回 Xcode，顶部设备下拉框应出现你的 iPhone
+
+命令行验证：
+```bash
+xcodebuild -project PictureDivide.xcodeproj -scheme PictureDivide \
+  -destination 'id=<你的UDID>' -derivedDataPath ./DerivedData CODE_SIGNING_ALLOWED=NO build
+# UDID 查法：xcrun devicectl list devices
+```
+
+### 坑 2：Team 只有 "Add Account…"，报 `requires a development team`
+
+说明 **Xcode 没登录 Apple ID**：
+
+1. Xcode → **Settings**（⌘,）→ **Accounts** → 左下 **+** → **Apple ID** → 登录（免费个人账号即可）
+2. 回到 target → **Signing & Capabilities** → **Team** 选 `你的名字 (Personal Team)`
+3. **Bundle Identifier** 改唯一值（默认 `com.picturedivide.personal` 很可能被占用）：
+   ```bash
+   Scripts/set-bundle-id.sh com.你的名字.picturedivide
+   ```
+   或直接在 Xcode 里改（注意：之后若再跑 `Scripts/bootstrap.sh` 会被 project.yml 覆盖，所以最好也同步改一下 project.yml）。
+
+### 坑 3：Xcode 里还显示已经修好的旧报错
+
+因为工程文件是脚本生成的，如果你开着 Xcode 时跑了 `bootstrap.sh`，Xcode 里的工程是旧的。
+**关闭工程窗口 → 重新打开 `PictureDivide.xcodeproj` → ⇧⌘K（Clean）→ ⌘R。**
+
+---
+
 ## 常见问题
 
 | 现象 | 处理 |

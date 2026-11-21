@@ -51,12 +51,18 @@ targets:
         NSFaceIDUsageDescription: 需要 Face ID 来解锁加密保险箱，确认只有你本人能查看这些照片。
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.picturedivide.app
+        # ⚠️ 改 Bundle ID：直接改这里，然后跑 Scripts/bootstrap.sh 重新生成工程。
+        #    或者直接在 Xcode 里改（但那样下次重新生成会被覆盖）。
+        #    必须全球唯一，否则报 "Failed to register bundle identifier"。
+        PRODUCT_BUNDLE_IDENTIFIER: com.picturedivide.personal
         PRODUCT_NAME: PictureDivide
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: true
         GENERATE_INFOPLIST_FILE: NO
+        # 免费个人账号签不了 entitlement，所以这里故意不带 entitlements 文件
+        # （用 Apple 官方 SensitiveContentAnalysis 才需要，详见 docs/build-and-testflight.md）
+        CODE_SIGN_ENTITLEMENTS: ""
       configs:
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
