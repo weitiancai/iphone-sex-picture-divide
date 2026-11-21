@@ -57,23 +57,28 @@ public final class OpenNSFWDetector: ContentDetector, @unchecked Sendable {
 
         guard !probabilities.isEmpty else { throw DetectorError.modelNotFound }
 
-        let porn = probabilities["porn"] ?? 0
-        let hentai = probabilities["hentai"] ?? 0
+        // 这个 .mlmodel 是 **二分类** 版本：prob = {NSFW: x, SFW: 1-x}。
+        // （早先按 porn/hentai 取值会全部取到 0，导致这个引擎一直报“未命中”。）
+        let nsfw = probabilities["NSFW"]
+            ?? probabilities["nsfw"]
+            ?? min(1, (probabilities["porn"] ?? 0) + (probabilities["hentai"] ?? 0))
         let sexy = probabilities["sexy"] ?? 0
-        let explicit = min(1, porn + hentai)
+        let label = probabilities["SFW"].map { "sfw=\(String(format: "%.2f", $0))" } ?? ""
 
         // 映射到我们的区域结构：它没有部位细分，全部归到"裸露"。
         var regions = RegionScores.zero
-        regions.nude = explicit
+        regions.nude = nsfw
         let evaluation = policy.evaluate(regions, thresholdOverride: override)
         return DetectionResult(score: evaluation.score,
                                regions: regions,
                                isSensitive: evaluation.isSensitive,
                                engine: .openNSFW,
-                               extra: "porn=\(String(format: "%.2f", porn)) hentai=\(String(format: "%.2f", hentai)) sexy=\(String(format: "%.2f", sexy))")
+                               extra: "nsfw=\(String(format: "%.3f", nsfw)) \(label) sexy=\(String(format: "%.2f", sexy))")
     }
 
     private static func resize(_ image: CGImage, side: Int) -> CGImage? {
+        // 居中裁正方形再缩放：直接拉伸会把竖图压扁，模型会误判人体比例。
+        let square = ImagePreprocessor.centerCropSquare(image) ?? image
         guard let ctx = CGContext(data: nil,
                                   width: side,
                                   height: side,
@@ -81,7 +86,7 @@ public final class OpenNSFWDetector: ContentDetector, @unchecked Sendable {
                                   bytesPerRow: side * 4,
                                   space: CGColorSpaceCreateDeviceRGB(),
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        ctx.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+        ctx.draw(square, in: CGRect(x: 0, y: 0, width: side, height: side))
         return ctx.makeImage()
     }
 }

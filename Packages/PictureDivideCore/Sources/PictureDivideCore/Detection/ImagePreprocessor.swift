@@ -11,9 +11,21 @@ public enum ImagePreprocessor {
     public static let side = 384
     public static let channelCount = 3
 
+    /// 居中裁成正方形（保持比例），再缩放到模型输入尺寸。
+    ///
+    /// ⚠️ 之前直接把图拉伸成正方形，竖图会被压扁，模型看到的"人体比例"失真 → 漏判。
+    public static func centerCropSquare(_ image: CGImage) -> CGImage? {
+        let w = CGFloat(image.width), h = CGFloat(image.height)
+        guard w > 0, h > 0 else { return nil }
+        let side = min(w, h)
+        let rect = CGRect(x: (w - side) / 2, y: (h - side) / 2, width: side, height: side)
+        return image.cropping(to: rect)
+    }
+
     /// CGImage → 模型的输入张量。
     public static func makeInput(from image: CGImage) throws -> MLMultiArray {
         let w = side, h = side
+        let square = centerCropSquare(image) ?? image
         guard let ctx = CGContext(data: nil,
                                   width: w,
                                   height: h,
@@ -23,8 +35,7 @@ public enum ImagePreprocessor {
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
             throw PreprocessorError.contextCreationFailed
         }
-        // 居中裁剪 + 等比缩放（避免拉伸变形）。
-        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        ctx.draw(square, in: CGRect(x: 0, y: 0, width: w, height: h))
 
         guard let rendered = ctx.makeImage(),
               let provider = rendered.dataProvider,

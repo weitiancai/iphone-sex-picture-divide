@@ -11,6 +11,8 @@ struct FlaggedItem: Identifiable, Hashable {
     var score: Double
     var regions: RegionScores
     var engine: DetectionResult.Engine
+    /// 敏感程度分档（明确色情 / 疑似暴露）。
+    var tier: SensitivityTier = .explicit
     /// 列表里显示的小图（已默认打码）。
     var thumbnail: UIImage?
     var previewImage: UIImage?

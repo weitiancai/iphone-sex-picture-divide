@@ -43,46 +43,56 @@ struct PDCtl {
 
         let policy = ScanPolicy(rawValue: options["policy"] ?? "standard") ?? .standard
         let quality = ModeratorDetector.Quality(rawValue: options["quality"] ?? "accurate") ?? .accurate
+        let engine = EngineOption(rawValue: options["engine"] ?? "moderator") ?? .moderator
+        let threshold = Double(options["threshold"] ?? "0.5") ?? 0.5
+        let suspect = Double(options["suspect"] ?? "0.15") ?? 0.15
 
-        let detector: ModeratorDetector
+        let moderator: ModeratorDetector?
+        let openNSFW: OpenNSFWDetector?
         do {
             if let path = options["model"] {
-                detector = try ModeratorDetector(modelURL: URL(fileURLWithPath: path), quality: quality)
+                moderator = try ModeratorDetector(modelURL: URL(fileURLWithPath: path), quality: quality)
             } else {
-                detector = try ModeratorDetector.loadFromDisk(quality: quality)
+                moderator = try? ModeratorDetector.loadFromDisk(quality: quality)
+            }
+            if let path = options["open-model"] {
+                openNSFW = try OpenNSFWDetector(modelURL: URL(fileURLWithPath: path))
+            } else {
+                openNSFW = try? OpenNSFWDetector.loadFromDisk()
             }
         } catch {
             FileHandle.standardError.write(Data("加载模型失败：\(error.localizedDescription)\n".utf8))
             exit(2)
         }
+        let detector = CompositeDetector(mode: engine, moderator: moderator, openNSFW: openNSFW)
 
         switch command {
         case "detect":
             guard positional.count >= 1 else { printUsage(); return }
-            await runDetect(detector: detector, path: positional[0], policy: policy)
+            await runDetect(detector: detector, path: positional[0], policy: policy, threshold: threshold, suspect: suspect)
         case "scan":
             guard positional.count >= 1 else { printUsage(); return }
-            await runScan(detector: detector, directory: URL(fileURLWithPath: positional[0]), policy: policy)
+            await runScan(detector: detector, directory: URL(fileURLWithPath: positional[0]), policy: policy, threshold: threshold, suspect: suspect)
         default:
             printUsage()
         }
     }
 
-    private static func runDetect(detector: ModeratorDetector, path: String, policy: ScanPolicy) async {
+    private static func runDetect(detector: ContentDetector, path: String, policy: ScanPolicy, threshold: Double, suspect: Double) async {
         let url = URL(fileURLWithPath: path)
         guard let image = loadImage(url) else {
             print("无法读取图片：\(path)")
             return
         }
         do {
-            let result = try await detector.detect(image: image, policy: policy)
-            print(resultLine(url.lastPathComponent, result))
+            let result = try await detector.detect(image: image, policy: policy, threshold: threshold)
+            print(resultLine(url.lastPathComponent, result, threshold: threshold, suspect: suspect))
         } catch {
             print("检测失败：\(error.localizedDescription)")
         }
     }
 
-    private static func runScan(detector: ModeratorDetector, directory: URL, policy: ScanPolicy) async {
+    private static func runScan(detector: ContentDetector, directory: URL, policy: ScanPolicy, threshold: Double, suspect: Double) async {
         let fm = FileManager.default
         guard let walker = fm.enumerator(at: directory,
                                          includingPropertiesForKeys: [.isRegularFileKey],
@@ -95,10 +105,10 @@ struct PDCtl {
             guard let image = loadImage(url) else { continue }
             total += 1
             do {
-                let result = try await detector.detect(image: image, policy: policy)
+                let result = try await detector.detect(image: image, policy: policy, threshold: threshold)
                 if result.isSensitive {
                     flagged += 1
-                    print(resultLine(url.lastPathComponent, result))
+                    print(resultLine(url.lastPathComponent, result, threshold: threshold, suspect: suspect))
                 }
             } catch {
                 print("检测失败 \(url.lastPathComponent)：\(error.localizedDescription)")
@@ -107,12 +117,18 @@ struct PDCtl {
         print("\n共扫描 \(total) 张，命中 \(flagged) 张（策略：\(policy.displayName)）")
     }
 
-    private static func resultLine(_ name: String, _ result: DetectionResult) -> String {
+    private static func resultLine(_ name: String, _ result: DetectionResult, threshold: Double = 0.5, suspect: Double = 0.15) -> String {
         let parts = result.regions.detectedParts.isEmpty ? "-" : result.regions.detectedParts.joined(separator: "/")
-        return String(format: "%@  score=%.3f  sensitive=%@  部位=%@  [%.2f/%.2f/%.2f/%.2f/%.2f]",
-                      name, result.score, result.isSensitive ? "是" : "否", parts,
-                      result.regions.nipples, result.regions.genitals, result.regions.buttocks,
-                      result.regions.nude, result.regions.sexAct)
+        let tier = TierPolicy.tier(score: result.score, regions: result.regions,
+                                   explicitThreshold: threshold,
+                                   suspectThreshold: suspect)
+        var line = String(format: "%@  [%@]  score=%.3f  sensitive=%@  tier=%@  部位=%@  [胸%.2f/殖%.2f/臀%.2f/裸%.2f/性%.2f]",
+                          name, result.engine.rawValue, result.score, result.isSensitive ? "是" : "否",
+                          tier.rawValue, parts,
+                          result.regions.nipples, result.regions.genitals, result.regions.buttocks,
+                          result.regions.nude, result.regions.sexAct)
+        if let extra = result.extra { line += "  " + extra }
+        return line
     }
 
     private static func loadImage(_ url: URL) -> CGImage? {
@@ -125,8 +141,10 @@ struct PDCtl {
         pdctl —— picture-divide 本机检测工具
 
         用法：
-          pdctl detect <图片路径> [--model <模型目录>] [--policy standard|strict|allowTopless]
-          pdctl scan <目录>     [--model <模型目录>] [--policy ...] [--quality fast|balanced|accurate]
+          pdctl detect <图片路径> [--model <模型目录>] [--open-model <模型目录>]
+                        [--engine moderator|openNSFW|both] [--threshold 0.5]
+                        [--policy standard|strict|allowTopless]
+          pdctl scan <目录>     [同上] [--quality fast|balanced|accurate]
 
         模型查找顺序：--model → 环境变量 PD_MODEL_PATH → ./Resources/Moderator.mlmodelc
         """)

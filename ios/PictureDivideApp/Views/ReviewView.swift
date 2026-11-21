@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import PictureDivideCore
 
 struct ReviewView: View {
     @EnvironmentObject private var state: AppState
@@ -55,6 +56,14 @@ struct ReviewView: View {
         }
     }
 
+    private func tierColor(_ tier: SensitivityTier) -> Color {
+        switch tier {
+        case .explicit: return .red
+        case .suspected: return .orange
+        case .safe: return .secondary
+        }
+    }
+
     private func row(for item: FlaggedItem) -> some View {
         HStack(spacing: 12) {
             ZStack {
@@ -78,6 +87,12 @@ struct ReviewView: View {
                 HStack(spacing: 6) {
                     Text(String(format: "%.2f", item.score))
                         .font(.caption.monospacedDigit())
+                    Text(item.tier.displayName)
+                        .font(.caption2)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(tierColor(item.tier).opacity(0.25))
+                        .foregroundStyle(tierColor(item.tier))
                     if !item.detectedParts.isEmpty {
                         Text(item.detectedParts.joined(separator: " · "))
                             .font(.caption)

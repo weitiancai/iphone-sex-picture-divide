@@ -20,6 +20,18 @@ final class AppState: ObservableObject {
     @Published var engineOption: EngineOption = .moderator
     /// 自定义触发阈值（0.3 ~ 0.9）。调高 = 误报更少、漏报更多。
     @Published var threshold: Double = 0.5
+    /// “疑似暴露”的下限（0 ~ 0.5）。
+    @Published var suspectThreshold: Double = 0.15
+    /// 是否把“疑似暴露”也当成需要处理的命中。
+    @Published var includeSuspected: Bool = true
+    /// 是否从上次断点继续扫。
+    @Published var resumeEnabled: Bool = true
+    /// 扫描被系统打断（息屏/切后台超时）时为真。
+    @Published var scanInterrupted: Bool = false
+    /// 上次扫描到的位置（仅展示）。
+    @Published var cursorDate: Date?
+
+    private var cursor = ScanCursor.load()
     @Published var scanRange: ScanRange = .last30Days
     /// 自定义区间的起始月 / 结束月。
     @Published var customStart: Date = Calendar.current.date(byAdding: .month, value: -3, to: Date()) ?? Date()
@@ -141,17 +153,40 @@ final class AppState: ObservableObject {
             guard let self else { return }
             let start = range == .custom ? ScanRange.monthStart(self.customStart) : range.startDate
             let end = range == .custom ? ScanRange.monthEnd(self.customEnd) : nil
-            let assets = Self.fetchAssets(start: start, end: end)
+            var assets = Self.fetchAssets(start: start, end: end)
+            if resumeEnabled, let last = cursor.lastDate {
+                let skipped = assets.count
+                assets = assets.filter { asset in
+                    guard let d = asset.creationDate else { return true }
+                    return d >= last
+                }
+                NSLog("[PictureDivide] 断点续扫：跳过 %d 张，从 %@ 开始", skipped - assets.count, last.formatted())
+            }
+            await MainActor.run { self.cursorDate = cursor.lastDate }
             await MainActor.run { self.progress.total = assets.count }
 
             var found: [FlaggedItem] = []
+            let suspectThreshold = self.suspectThreshold
+            let includeSuspected = self.includeSuspected
+            let explicitThreshold = self.threshold
+
+            // 切后台 / 息屏时申请一段额外时间；被系统收回时中止并保存断点。
+            BackgroundSupport.beginBackgroundTask { [weak self] in
+                self?.scanTask?.cancel()
+            }
+
             for (index, asset) in assets.enumerated() {
                 if Task.isCancelled { break }
                 guard let cgImage = await PhotoLibrary.cgImage(for: asset) else { continue }
                 do {
                     let result = try await detector.detect(image: cgImage, policy: policy, threshold: threshold)
-                    if result.isSensitive {
-                        NSLog("[PictureDivide] 命中：score=%.3f %@", result.score, result.extra ?? result.regions.detectedParts.joined(separator: "/"))
+                    let tier = TierPolicy.tier(score: result.score,
+                                              regions: result.regions,
+                                              explicitThreshold: explicitThreshold,
+                                              suspectThreshold: suspectThreshold)
+                    let hit = result.isSensitive || (includeSuspected && tier == .suspected)
+                    if hit {
+                        NSLog("[PictureDivide] 命中[%@]：score=%.3f %@", tier.rawValue, result.score, result.extra ?? result.regions.detectedParts.joined(separator: "/"))
                         let thumbnail = await PhotoLibrary.thumbnail(for: asset)
                         let preview = await PhotoLibrary.preview(for: asset)
                         found.append(FlaggedItem(id: asset.localIdentifier,
@@ -159,6 +194,7 @@ final class AppState: ObservableObject {
                                                  score: result.score,
                                                  regions: result.regions,
                                                  engine: result.engine,
+                                                 tier: tier,
                                                  thumbnail: thumbnail,
                                                  previewImage: preview))
                     }
@@ -172,23 +208,43 @@ final class AppState: ObservableObject {
                     self.progress.scanned = scanned
                     self.progress.found = current
                 }
+                if scanned % 10 == 0 {
+                    cursor.lastDate = asset.creationDate
+                    cursor.lastIdentifier = asset.localIdentifier
+                    cursor.save()
+                }
                 if scanned % 25 == 0 {
                     NSLog("[PictureDivide] 扫描进度 %d/%d，命中 %d", scanned, assets.count, current)
                 }
             }
+            BackgroundSupport.endBackgroundTask()
+            let wasCancelled = Task.isCancelled
             await MainActor.run {
                 self.flagged.append(contentsOf: found)
                 self.progress.isRunning = false
                 self.progress.currentAsset = nil
                 self.lastScanFinishedAt = Date()
+                self.scanInterrupted = wasCancelled
+                if wasCancelled {
+                    self.cursorDate = self.cursor.lastDate
+                }
             }
-            NSLog("[PictureDivide] 扫描完成：共 %d 张，命中 %d 张", assets.count, found.count)
+            NSLog("[PictureDivide] %@：共 %d 张，命中 %d 张", wasCancelled ? "扫描被打断（断点已保存）" : "扫描完成", assets.count, found.count)
         }
     }
 
     func cancelScan() {
         scanTask?.cancel()
         progress.isRunning = false
+        cursor.save()
+        BackgroundSupport.endBackgroundTask()
+    }
+
+    /// 清空断点，下次从头扫。
+    func resetCursor() {
+        ScanCursor.clear()
+        cursor = ScanCursor()
+        cursorDate = nil
     }
 
     private nonisolated static func fetchAssets(start: Date?, end: Date?) -> [PHAsset] {

@@ -1,8 +1,18 @@
 import SwiftUI
 
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        // 后台扫描任务必须在启动早期注册。
+        BackgroundSupport.registerBackgroundScan()
+        return true
+    }
+}
+
 @main
 struct PictureDivideApp: App {
     @StateObject private var state = AppState()
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
         WindowGroup {
@@ -10,6 +20,16 @@ struct PictureDivideApp: App {
                 .environmentObject(state)
                 .task {
                     await state.bootstrap()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                    // 回到前台：如果上次扫描被打断，自动接着跑。
+                    if state.scanInterrupted && !state.progress.isRunning {
+                        state.startScan()
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: BackgroundSupport.backgroundScanNotification)) { _ in
+                    // 系统在后台唤起扫描任务。
+                    state.startScan()
                 }
         }
     }

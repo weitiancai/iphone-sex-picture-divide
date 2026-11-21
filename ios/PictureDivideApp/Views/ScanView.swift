@@ -103,6 +103,24 @@ struct ScanView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
 
+                    VStack(alignment: .leading) {
+                        HStack {
+                            Text("疑似暴露下限")
+                            Spacer()
+                            Text(String(format: "%.2f", state.suspectThreshold))
+                                .font(.body.monospacedDigit())
+                        }
+                        Slider(value: $state.suspectThreshold, in: 0.05...0.50, step: 0.05)
+                    }
+                    Toggle("把「疑似暴露」也标记出来", isOn: $state.includeSuspected)
+                    Text("""
+                    明确色情 = 露点 / 生殖器 / 性行为（高置信）。
+                    疑似暴露 = 没露点但裸露明显（内衣、网袜、局部胸臀），例如刚才那张网袜图约 0.21。
+                    关掉这个开关就只报“明确色情”。
+                    """)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
                     Text(state.quality == .fast
                          ? "快速：每张只算 1 次，最快，但可能漏掉边缘内容。"
                          : state.quality == .balanced
@@ -134,9 +152,28 @@ struct ScanView: View {
                         }
                         .disabled(state.authorization != .authorized && state.authorization != .limited)
                     }
+                    Toggle("断点续扫（被系统打断后接着扫）", isOn: $state.resumeEnabled)
+                    if let cursor = state.cursorDate {
+                        HStack {
+                            Text("上次扫到")
+                            Spacer()
+                            Text(cursor.formatted(date: .abbreviated, time: .omitted))
+                                .foregroundStyle(.secondary)
+                        }
+                        Button("清除断点，从头开始") {
+                            state.resetCursor()
+                        }
+                        .font(.footnote)
+                    }
+                    if state.scanInterrupted {
+                        Label("上次扫描被系统打断（息屏/切后台），已保存断点。", systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                    }
                 } header: {
                     Text("扫描")
                 } footer: {
+                    Text("切到其他 App 或息屏时会尽量继续（系统给一小段后台时间）；被打断也没关系，下次自动从断点继续。")
                     if let error = state.scanError {
                         Text(error).foregroundStyle(.red)
                     } else if let finished = state.lastScanFinishedAt {

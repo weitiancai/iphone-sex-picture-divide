@@ -50,6 +50,10 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         NSPhotoLibraryUsageDescription: 需要读取你的照片来在设备本地识别露骨/私密内容，并把命中的照片移进加密保险箱。照片不会离开这台设备。
         NSPhotoLibraryAddUsageDescription: 需要把保险箱里的照片恢复回系统相册。
+        UIBackgroundModes:
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.picturedivide.personal.scan
         NSFaceIDUsageDescription: 需要 Face ID 来解锁加密保险箱，确认只有你本人能查看这些照片。
     settings:
       base:

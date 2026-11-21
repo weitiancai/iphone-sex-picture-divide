@@ -30,6 +30,43 @@ public struct RegionScores: Codable, Equatable, Hashable, Sendable {
     public static let zero = RegionScores()
 }
 
+/// 敏感程度分档。
+public enum SensitivityTier: String, Codable, Sendable {
+    /// 明确色情：露点 / 生殖器 / 性行为。
+    case explicit
+    /// 疑似暴露：性感、内衣、局部裸露（胸部/臀部等）。
+    case suspected
+    /// 安全。
+    case safe
+
+    public var displayName: String {
+        switch self {
+        case .explicit: return "明确色情"
+        case .suspected: return "疑似暴露"
+        case .safe: return "安全"
+        }
+    }
+}
+
+/// 分档规则。
+public enum TierPolicy {
+    /// - Parameters:
+    ///   - score: 模型总分（已按策略取参与计分的区域最大值）
+    ///   - regions: 各区域分数
+    ///   - explicitThreshold: 判定“明确色情”的阈值（默认 0.5）
+    ///   - suspectThreshold: 判定“疑似暴露”的阈值（默认 0.15）
+    public static func tier(score: Double,
+                           regions: RegionScores,
+                           explicitThreshold: Double = 0.5,
+                           suspectThreshold: Double = 0.15) -> SensitivityTier {
+        // 生殖器 / 性行为出现就直接算明确。
+        if regions.genitals >= 0.5 || regions.sexAct >= 0.5 { return .explicit }
+        if score >= explicitThreshold { return .explicit }
+        if score >= suspectThreshold { return .suspected }
+        return .safe
+    }
+}
+
 /// 单张图片的检测结果。
 public struct DetectionResult: Codable, Equatable, Sendable {
     public enum Engine: String, Codable, Sendable {
