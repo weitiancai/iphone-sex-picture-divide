@@ -16,6 +16,7 @@ final class AppState: ObservableObject {
     @Published var progress = ScanProgress()
     @Published var flagged: [FlaggedItem] = []
     @Published var policy: ScanPolicy = .standard
+    @Published var quality: ModeratorDetector.Quality = .accurate
     @Published var scanRange: ScanRange = .last30Days
     @Published var scanError: String?
     @Published var lastScanFinishedAt: Date?
@@ -39,17 +40,31 @@ final class AppState: ObservableObject {
         authorization = PhotoLibrary.authorizationStatus()
         loadDetector()
         refreshVaultItems()
+        // 调试/自动化用：启动参数 --autoscan 会自动开扫，方便命令行验证。
+        if ProcessInfo.processInfo.arguments.contains("--autoscan") {
+            if authorization == .notDetermined {
+                await requestAccess()
+            }
+            if authorization == .authorized || authorization == .limited {
+                NSLog("[PictureDivide] --autoscan 触发自动扫描")
+                startScan()
+            }
+        }
+    }
+
+    /// 重新加载检测模型（切换扫描速度时调用）。
+    func reloadDetector() {
+        loadDetector()
     }
 
     private func loadDetector() {
-        if detector == nil {
-            do {
-                let loaded = try ModeratorDetector.loadFromDisk()
-                detector = loaded
-                NSLog("[PictureDivide] 模型加载成功：%@", loaded.engine.rawValue)
-            } catch {
-                NSLog("[PictureDivide] 模型加载失败：%@", error.localizedDescription)
-            }
+        if let current = detector as? ModeratorDetector, current.quality == quality { return }
+        do {
+            let loaded = try ModeratorDetector.loadFromDisk(quality: quality)
+            detector = loaded
+            NSLog("[PictureDivide] 模型加载成功：%@（%@）", loaded.engine.rawValue, quality.rawValue)
+        } catch {
+            NSLog("[PictureDivide] 模型加载失败：%@", error.localizedDescription)
         }
     }
 
@@ -109,12 +124,16 @@ final class AppState: ObservableObject {
                     }
                 } catch {
                     await MainActor.run { self.scanError = error.localizedDescription }
+                    NSLog("[PictureDivide] 单张检测失败：%@", error.localizedDescription)
                 }
                 let scanned = index + 1
                 let current = found.count
                 await MainActor.run {
                     self.progress.scanned = scanned
                     self.progress.found = current
+                }
+                if scanned % 25 == 0 {
+                    NSLog("[PictureDivide] 扫描进度 %d/%d，命中 %d", scanned, assets.count, current)
                 }
             }
             await MainActor.run {
@@ -123,6 +142,7 @@ final class AppState: ObservableObject {
                 self.progress.currentAsset = nil
                 self.lastScanFinishedAt = Date()
             }
+            NSLog("[PictureDivide] 扫描完成：共 %d 张，命中 %d 张", assets.count, found.count)
         }
     }
 

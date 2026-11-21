@@ -52,6 +52,18 @@ struct ScanView: View {
                     Text(state.policy.detail)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    Picker("扫描速度", selection: $state.quality) {
+                        Text("快速").tag(ModeratorDetector.Quality.fast)
+                        Text("均衡").tag(ModeratorDetector.Quality.balanced)
+                        Text("精确").tag(ModeratorDetector.Quality.accurate)
+                    }
+                    Text(state.quality == .fast
+                         ? "快速：每张只算 1 次，最快，但可能漏掉边缘内容。"
+                         : state.quality == .balanced
+                           ? "均衡：每张算 5 次（整图 + 4 个裁剪块）。"
+                           : "精确：每张算 9 次（整图 + 4 个裁剪块 + 镜像），召回最高，也最慢。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 } header: {
                     Text("参数")
                 } footer: {
@@ -87,6 +99,9 @@ struct ScanView: View {
                 }
             }
             .navigationTitle("扫描")
+            .onChange(of: state.quality) { _, _ in
+                state.reloadDetector()
+            }
         }
     }
 }

@@ -43,8 +43,8 @@ public final class ModeratorDetector: ContentDetector, @unchecked Sendable {
 
     public let engine: DetectionResult.Engine = .moderator
 
-    private let model: MLModel
-    private let quality: Quality
+    public let model: MLModel
+    public let quality: Quality
 
     public init(modelURL: URL, quality: Quality = .accurate) throws {
         self.model = try MLModel(contentsOf: modelURL)

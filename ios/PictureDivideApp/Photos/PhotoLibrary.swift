@@ -4,6 +4,35 @@ import Photos
 import UIKit
 import UniformTypeIdentifiers
 
+/// 防止 `withCheckedContinuation` 被 resume 多次（会触发 Swift 运行时 trap：SWIFT CHECKED CONTINUATION MISUSE）。
+///
+/// `PHImageRequestOptions.deliveryMode = .opportunistic` 会回调两次（先低清后高清），
+/// 所有 PhotoKit 请求都必须用这个兜底。
+final class OneShot<T, F: Error> {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, F>?
+
+    init(_ continuation: CheckedContinuation<T, F>) {
+        self.continuation = continuation
+    }
+
+    func resume(returning value: T) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(returning: value)
+    }
+
+    func resume(throwing error: F) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(throwing: error)
+    }
+}
+
 /// 相册读取 + 资源搬运（删除 / 恢复）。
 enum PhotoLibrary {
     static func authorizationStatus() -> PHAuthorizationStatus {
@@ -25,14 +54,14 @@ enum PhotoLibrary {
             options.isNetworkAccessAllowed = true
             options.version = .current
             options.deliveryMode = .highQualityFormat
+            let shot = OneShot(continuation)
             PHImageManager.default().requestImageDataAndOrientation(for: asset, options: options) { data, _, _, _ in
                 if let data {
-                    continuation.resume(returning: data)
+                    shot.resume(returning: data)
                 } else {
-                    continuation.resume(throwing: PhotoError.imageDataUnavailable)
+                    shot.resume(throwing: PhotoError.imageDataUnavailable)
                 }
-            }
-        }
+            }        }
     }
 
     /// 生成缩略图（用于列表展示）。
@@ -40,23 +69,25 @@ enum PhotoLibrary {
         await withCheckedContinuation { continuation in
             let options = PHImageRequestOptions()
             options.isNetworkAccessAllowed = true
-            options.deliveryMode = .opportunistic
+            options.deliveryMode = .highQualityFormat
             options.resizeMode = .fast
+            let shot = OneShot(continuation)
             PHImageManager.default().requestImage(for: asset, targetSize: size, contentMode: .aspectFill, options: options) { image, _ in
-                continuation.resume(returning: image)
+                shot.resume(returning: image)
             }
         }
     }
 
     /// 生成大一点的预览图。
-    static func preview(for asset: PHAsset, size: CGSize = CGSize(width: 900, height: 900)) async -> UIImage? {
+    static func preview(for asset: PHAsset, size: CGSize = CGSize(width: 640, height: 640)) async -> UIImage? {
         await withCheckedContinuation { continuation in
             let options = PHImageRequestOptions()
             options.isNetworkAccessAllowed = true
-            options.deliveryMode = .opportunistic
+            options.deliveryMode = .highQualityFormat
             options.resizeMode = .fast
+            let shot = OneShot(continuation)
             PHImageManager.default().requestImage(for: asset, targetSize: size, contentMode: .aspectFit, options: options) { image, _ in
-                continuation.resume(returning: image)
+                shot.resume(returning: image)
             }
         }
     }
@@ -68,12 +99,13 @@ enum PhotoLibrary {
             options.isNetworkAccessAllowed = true
             options.deliveryMode = .highQualityFormat
             options.resizeMode = .fast
+            let shot = OneShot(continuation)
             PHImageManager.default().requestImage(for: asset, targetSize: size, contentMode: .aspectFit, options: options) { image, _ in
                 guard let image else {
-                    continuation.resume(returning: nil)
+                    shot.resume(returning: nil)
                     return
                 }
-                continuation.resume(returning: image.cgImage)
+                shot.resume(returning: image.cgImage)
             }
         }
     }
