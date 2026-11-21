@@ -30,6 +30,8 @@ final class AppState: ObservableObject {
     @Published var scanInterrupted: Bool = false
     /// 上次扫描到的位置（仅展示）。
     @Published var cursorDate: Date?
+    /// 批量操作进度（0~1）。
+    @Published var batchProgress: Double = 0
 
     private var cursor = ScanCursor.load()
     /// 历史检测记录（跨重启保留，按 localIdentifier 去重）。
@@ -360,6 +362,35 @@ final class AppState: ObservableObject {
         } catch {
             scanError = error.localizedDescription
         }
+    }
+
+    // MARK: - 批量操作
+
+    /// 批量加入隐私相册（保留原图）。
+    func addToPrivateAlbum(_ items: [FlaggedItem]) async {
+        for (index, item) in items.enumerated() {
+            await addToPrivateAlbum(item)
+            batchProgress = Double(index + 1) / Double(max(items.count, 1))
+        }
+        batchProgress = 0
+    }
+
+    /// 批量删除系统相册原图。
+    func deleteOriginals(_ items: [FlaggedItem]) async {
+        for (index, item) in items.enumerated() {
+            await deleteOriginal(item)
+            batchProgress = Double(index + 1) / Double(max(items.count, 1))
+        }
+        batchProgress = 0
+    }
+
+    /// 批量加入隐私相册并删除原图。
+    func addToPrivateAlbumAndDeleteOriginals(_ items: [FlaggedItem]) async {
+        for (index, item) in items.enumerated() {
+            await addToPrivateAlbumAndDeleteOriginal(item)
+            batchProgress = Double(index + 1) / Double(max(items.count, 1))
+        }
+        batchProgress = 0
     }
 
     /// ③ 加入隐私相册 + 同时删除系统相册原图（一步到位）。
