@@ -36,19 +36,17 @@ struct ReviewView: View {
                         .padding(.horizontal, 1)
 
                         if !moved.isEmpty {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("已加入隐私相册（\(moved.count)）")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .padding(.top, 12)
-                                    .padding(.horizontal, 12)
-                                LazyVGrid(columns: columns, spacing: 3) {
-                                    ForEach(moved) { item in
-                                        cell(item, dimmed: true)
-                                    }
+                            sectionHeader("已加入隐私相册（\(moved.count)）")
+                            LazyVGrid(columns: columns, spacing: 3) {
+                                ForEach(moved) { item in
+                                    cell(item, dimmed: true)
                                 }
-                                .padding(.horizontal, 1)
                             }
+                            .padding(.horizontal, 1)
+                        }
+
+                        if state.ignoredCount > 0 {
+                            sectionHeader("已标记为不处理（\(state.ignoredCount)）—— 右上角菜单可以恢复")
                         }
                     }
                 }
@@ -61,6 +59,11 @@ struct ReviewView: View {
                         Button("全选本页") {
                             selection = Set(pending.map(\.id))
                             selecting = true
+                        }
+                        if state.ignoredCount > 0 {
+                            Button("恢复已标记为不处理的 \(state.ignoredCount) 张") {
+                                state.restoreIgnored()
+                            }
                         }
                         Button("取消选择") {
                             selection = []
@@ -83,6 +86,14 @@ struct ReviewView: View {
         }
     }
 
+    private func sectionHeader(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.top, 12)
+            .padding(.horizontal, 12)
+    }
+
     // MARK: - 网格单元
 
     @ViewBuilder
@@ -94,7 +105,6 @@ struct ReviewView: View {
                 .clipped()
                 .opacity(dimmed ? 0.45 : 1)
                 .overlay(alignment: .bottomLeading) {
-                    // 分档徽章
                     Text(item.tier.displayName)
                         .font(.system(size: 9, weight: .semibold))
                         .padding(.horizontal, 4).padding(.vertical, 2)
@@ -103,9 +113,8 @@ struct ReviewView: View {
                         .padding(4)
                 }
                 .overlay {
-                    if selecting {
-                        (isSelected ? Color.accentColor : Color.clear)
-                            .opacity(isSelected ? 0.35 : 1)
+                    if selecting && isSelected {
+                        Color.accentColor.opacity(0.3)
                     }
                 }
                 .overlay(alignment: .topLeading) {
@@ -152,6 +161,14 @@ struct ReviewView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(busy)
 
+                Button {
+                    batchIgnore()
+                } label: {
+                    Label("不处理", systemImage: "xmark.circle")
+                }
+                .buttonStyle(.bordered)
+                .disabled(busy)
+
                 Menu {
                     Button("批量删除原图", role: .destructive) {
                         Task { await batchDeleteOriginals() }
@@ -165,7 +182,7 @@ struct ReviewView: View {
                 .buttonStyle(.bordered)
                 .disabled(busy)
             }
-            Text("“加入隐私相册”只加密存副本，系统相册原图不动；删除才会动原图。")
+            Text("“加入隐私相册”只加密存副本，系统相册原图不动；删除才会动原图；“不处理”两张都不动，只是从列表里收走。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -200,6 +217,13 @@ struct ReviewView: View {
         busy = true
         await state.addToPrivateAlbumAndDeleteOriginals(selectedItems())
         busy = false
+        selection = []
+        selecting = false
+    }
+
+    /// 批量标记为“不要处理”：原图不动，只是从待处理列表里收走。
+    private func batchIgnore() {
+        state.markAsSafe(selectedItems())
         selection = []
         selecting = false
     }

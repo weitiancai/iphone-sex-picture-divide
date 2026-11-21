@@ -384,6 +384,30 @@ final class AppState: ObservableObject {
         batchProgress = 0
     }
 
+    /// 批量标记为“不要处理”（误报/无需处理），原图一律不动。
+    func markAsSafe(_ items: [FlaggedItem]) {
+        for item in items {
+            mark(item.id, state: .ignored)
+        }
+        NSLog("[PictureDivide] 批量标记为不处理：%d 张", items.count)
+    }
+
+    /// 把之前标记为“不处理”的全部恢复成待处理。
+    func restoreIgnored() {
+        var restored = 0
+        for index in flagged.indices where flagged[index].state == .ignored {
+            flagged[index].state = .pending
+            detectionStore.setState(id: flagged[index].id, state: FlaggedItem.State.pending.rawValue)
+            restored += 1
+        }
+        NSLog("[PictureDivide] 恢复不处理项：%d 张", restored)
+    }
+
+    /// 当前被标记为“不处理”的数量。
+    var ignoredCount: Int {
+        flagged.filter { $0.state == .ignored }.count
+    }
+
     /// 批量加入隐私相册并删除原图。
     func addToPrivateAlbumAndDeleteOriginals(_ items: [FlaggedItem]) async {
         for (index, item) in items.enumerated() {
