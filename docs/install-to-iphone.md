@@ -93,11 +93,25 @@ open PictureDivide.xcodeproj
 
 ### 坑 1：设备列表里没有你的 iPhone / 报 `Developer Mode disabled`
 
-iPhone 16+ / iOS 16+ 强制要求开启开发者模式：
+iPhone 16+ / iOS 16+ 强制要求开启开发者模式。
 
-1. iPhone → **设置 → 隐私与安全性 → 开发者模式** → 打开 → **重启手机**
-2. 重启后再进同一位置 → 弹窗点"开启" → 输入锁屏密码
-3. 回 Xcode，顶部设备下拉框应出现你的 iPhone
+**「设置 → 隐私与安全性 → 开发者模式」找不到？正常！**
+Apple 只有在**设备已经具备开发用途**（Xcode 往手机上装过开发签名的 App / 挂载过开发镜像）之后，
+才会在设置里显示这个开关。所以顺序是反的：
+
+1. 先完成「坑 2」（登录 Apple ID、选 Team、唯一 Bundle ID）
+2. **⌘R** → 手机会弹出系统提示「开发者模式已关闭」→ **点提示里的「设置」**，会直接跳到那个页面
+   （如果没弹窗：Xcode 顶部设备下拉里先选中你的 iPhone，再按 ⌘R；或先⌘⌘R?）
+3. 打开**开发者模式** → 按提示**重启手机**
+4. 重启后：**设置 → 隐私与安全性 → 开发者模式**（这时候它出现了）→ 再点一次"开启"并输入锁屏密码
+5. 回 Xcode 再次 **⌘R** → 装好
+
+命令行随时可查状态：
+```bash
+xcrun devicectl device info details --device 00008110-001271163A12801E | grep -i developer
+# Developer Mode Status: Disabled  → 说明还没开
+# Developer Mode Status: Enabled   → 可以装了
+```
 
 命令行验证：
 ```bash
