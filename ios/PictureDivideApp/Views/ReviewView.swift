@@ -2,22 +2,18 @@ import PictureDivideCore
 import SwiftUI
 import UIKit
 
-/// 复核页：相册式网格 + 多选 + 批量操作。
+/// 复核页：Photos 式网格 + 全屏浏览 + 多选批量操作。
 struct ReviewView: View {
     @EnvironmentObject private var state: AppState
 
-    /// 多选中的资源 id。
     @State private var selection: Set<String> = []
     @State private var selecting = false
-    @State private var detail: FlaggedItem?
-    /// 网格是否打码（默认打码，一键全显示）。
+    @State private var viewing: FlaggedItem?
     @State private var blurred = true
     @State private var busy = false
 
     private var pending: [FlaggedItem] { state.flagged.filter { $0.state == .pending } }
     private var moved: [FlaggedItem] { state.flagged.filter { $0.state == .moved } }
-
-    private let columns = [GridItem(.adaptive(minimum: 104, maximum: 160), spacing: 3)]
 
     var body: some View {
         NavigationStack {
@@ -28,25 +24,16 @@ struct ReviewView: View {
                                            description: Text("先去「扫描」跑一遍，命中的照片会出现在这里等你处理。"))
                 } else {
                     ScrollView {
-                        LazyVGrid(columns: columns, spacing: 3) {
-                            ForEach(pending) { item in
-                                cell(item)
-                            }
-                        }
-                        .padding(.horizontal, 1)
+                        VStack(alignment: .leading, spacing: 0) {
+                            grid(for: pending)
 
-                        if !moved.isEmpty {
-                            sectionHeader("已加入隐私相册（\(moved.count)）")
-                            LazyVGrid(columns: columns, spacing: 3) {
-                                ForEach(moved) { item in
-                                    cell(item, dimmed: true)
-                                }
+                            if !moved.isEmpty {
+                                header("已加入隐私相册（\(moved.count)）")
+                                grid(for: moved, dimmed: true)
                             }
-                            .padding(.horizontal, 1)
-                        }
-
-                        if state.ignoredCount > 0 {
-                            sectionHeader("已标记为不处理（\(state.ignoredCount)）—— 右上角菜单可以恢复")
+                            if state.ignoredCount > 0 {
+                                header("已标记为不处理（\(state.ignoredCount)）—— 右上角菜单可以恢复")
+                            }
                         }
                     }
                 }
@@ -55,19 +42,21 @@ struct ReviewView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Toggle("网格打码", isOn: $blurred)
-                        Button("全选本页") {
-                            selection = Set(pending.map(\.id))
-                            selecting = true
+                        Toggle("图片打码", isOn: $blurred)
+                        Button(selecting ? "退出多选" : "进入多选") {
+                            selecting.toggle()
+                            if !selecting { selection = [] }
+                        }
+                        if !pending.isEmpty {
+                            Button("全选待处理（\(pending.count) 张）") {
+                                selection = Set(pending.map(\.id))
+                                selecting = true
+                            }
                         }
                         if state.ignoredCount > 0 {
                             Button("恢复已标记为不处理的 \(state.ignoredCount) 张") {
                                 state.restoreIgnored()
                             }
-                        }
-                        Button("取消选择") {
-                            selection = []
-                            selecting = false
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")
@@ -79,68 +68,102 @@ struct ReviewView: View {
                     batchBar
                 }
             }
-            .sheet(item: $detail) { item in
-                DetailSheet(item: item)
-                    .environmentObject(state)
+            .fullScreenCover(item: $viewing) { item in
+                FullScreenViewer(items: pending.isEmpty ? [item] : pending,
+                                 startID: item.id,
+                                 isBlurred: blurred,
+                                 loadImage: { item in
+                                     await ThumbnailProvider.shared.original(for: item.id)
+                                 },
+                                 titleFor: { item in
+                                     item.creationDate?.formatted(date: .abbreviated, time: .omitted) ?? ""
+                                 },
+                                 badgeFor: { $0.tier.displayName },
+                                 badgeColorFor: { tierColor($0.tier) },
+                                 actions: { current in
+                                     AnyView(viewerActions(current))
+                                 })
             }
         }
     }
 
-    private func sectionHeader(_ text: String) -> some View {
+    // MARK: - 网格
+
+    private func grid(for items: [FlaggedItem], dimmed: Bool = false) -> some View {
+        PhotoGridView(items: items,
+                      columnCount: 3,
+                      spacing: 2,
+                      isBlurred: blurred,
+                      selectedIDs: selection,
+                      isSelecting: selecting,
+                      badgeText: { $0.tier.displayName },
+                      badgeColor: { tierColor($0.tier) },
+                      loadImage: { item in
+                          if let thumb = item.thumbnail { return thumb }
+                          return await ThumbnailProvider.shared.thumbnail(for: item.id)
+                      },
+                      onTap: { item in
+                          if selecting {
+                              if selection.contains(item.id) { selection.remove(item.id) }
+                              else { selection.insert(item.id) }
+                          } else {
+                              viewing = item
+                          }
+                      },
+                      onLongPress: { item in
+                          if !selecting {
+                              selecting = true
+                              selection.insert(item.id)
+                          }
+                      })
+        .opacity(dimmed ? 0.45 : 1)
+    }
+
+    private func header(_ text: String) -> some View {
         Text(text)
             .font(.caption)
             .foregroundStyle(.secondary)
-            .padding(.top, 12)
+            .padding(.vertical, 8)
             .padding(.horizontal, 12)
     }
 
-    // MARK: - 网格单元
+    // MARK: - 全屏浏览器里的动作
 
     @ViewBuilder
-    private func cell(_ item: FlaggedItem, dimmed: Bool = false) -> some View {
-        let isSelected = selection.contains(item.id)
-        ZStack(alignment: .topTrailing) {
-            GridThumbnail(item: item, blurred: blurred)
-                .aspectRatio(1, contentMode: .fill)
-                .clipped()
-                .opacity(dimmed ? 0.45 : 1)
-                .overlay(alignment: .bottomLeading) {
-                    Text(item.tier.displayName)
-                        .font(.system(size: 9, weight: .semibold))
-                        .padding(.horizontal, 4).padding(.vertical, 2)
-                        .background(.black.opacity(0.55))
-                        .foregroundStyle(tierColor(item.tier))
-                        .padding(4)
+    private func viewerActions(_ item: FlaggedItem) -> some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                Button {
+                    Task { await state.addToPrivateAlbum(item) }
+                } label: {
+                    Label("加入隐私相册", systemImage: "lock.shield")
+                        .frame(maxWidth: .infinity)
                 }
-                .overlay {
-                    if selecting && isSelected {
-                        Color.accentColor.opacity(0.3)
-                    }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    state.markAsSafe(item)
+                } label: {
+                    Label("不处理", systemImage: "xmark.circle")
                 }
-                .overlay(alignment: .topLeading) {
-                    if selecting {
-                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                            .font(.title3)
-                            .symbolRenderingMode(.palette)
-                            .foregroundStyle(.white, isSelected ? Color.accentColor : Color.black.opacity(0.4))
-                            .padding(6)
-                    }
+                .buttonStyle(.bordered)
+            }
+
+            Menu {
+                Button("只删除系统相册原图", role: .destructive) {
+                    Task { await state.deleteOriginal(item) }
                 }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if selecting {
-                        if isSelected { selection.remove(item.id) } else { selection.insert(item.id) }
-                    } else {
-                        detail = item
-                    }
+                Button("加入隐私相册并删除原图", role: .destructive) {
+                    Task { await state.addToPrivateAlbumAndDeleteOriginal(item) }
                 }
-                .onLongPressGesture {
-                    if !selecting {
-                        selecting = true
-                        selection.insert(item.id)
-                    }
-                }
+            } label: {
+                Label("更多操作", systemImage: "ellipsis.circle")
+                    .font(.footnote)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
         }
+        .tint(.white)
     }
 
     // MARK: - 批量操作条
@@ -148,8 +171,7 @@ struct ReviewView: View {
     private var batchBar: some View {
         VStack(spacing: 8) {
             if busy {
-                ProgressView()
-                    .padding(.vertical, 4)
+                ProgressView().padding(.vertical, 4)
             }
             HStack(spacing: 10) {
                 Button {
@@ -233,34 +255,6 @@ struct ReviewView: View {
         case .explicit: return .red
         case .suspected: return .orange
         case .safe: return .secondary
-        }
-    }
-}
-
-/// 网格里的单张缩略图（异步加载 + 可选打码）。
-private struct GridThumbnail: View {
-    let item: FlaggedItem
-    let blurred: Bool
-    @State private var image: UIImage?
-
-    var body: some View {
-        ZStack {
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .blur(radius: blurred ? 10 : 0)
-            } else {
-                Rectangle().fill(.quaternary)
-                    .overlay(ProgressView().scaleEffect(0.6))
-            }
-        }
-        .task(id: item.id) {
-            if let cached = item.thumbnail {
-                image = cached
-            } else if let loaded = await ThumbnailProvider.shared.thumbnail(for: item.id) {
-                image = loaded
-            }
         }
     }
 }
