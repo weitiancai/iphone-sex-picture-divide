@@ -64,13 +64,14 @@ enum PhotoLibrary {
             }        }
     }
 
-    /// 生成缩略图（用于列表展示）。
-    static func thumbnail(for asset: PHAsset, size: CGSize = CGSize(width: 240, height: 240)) async -> UIImage? {
+    /// 生成缩略图（用于网格展示）。
+    /// 用 `.exact` + `.highQualityFormat`，避免 `.fast` 带来的模糊。
+    static func thumbnail(for asset: PHAsset, size: CGSize = CGSize(width: 420, height: 420)) async -> UIImage? {
         await withCheckedContinuation { continuation in
             let options = PHImageRequestOptions()
             options.isNetworkAccessAllowed = true
             options.deliveryMode = .highQualityFormat
-            options.resizeMode = .fast
+            options.resizeMode = .exact
             let shot = OneShot(continuation)
             PHImageManager.default().requestImage(for: asset, targetSize: size, contentMode: .aspectFill, options: options) { image, _ in
                 shot.resume(returning: image)
@@ -78,18 +79,33 @@ enum PhotoLibrary {
         }
     }
 
-    /// 生成大一点的预览图。
-    static func preview(for asset: PHAsset, size: CGSize = CGSize(width: 640, height: 640)) async -> UIImage? {
+    /// 生成预览图（中等分辨率，用于详情页背景/缩略）。
+    static func preview(for asset: PHAsset, size: CGSize = CGSize(width: 1200, height: 1200)) async -> UIImage? {
         await withCheckedContinuation { continuation in
             let options = PHImageRequestOptions()
             options.isNetworkAccessAllowed = true
             options.deliveryMode = .highQualityFormat
-            options.resizeMode = .fast
+            options.resizeMode = .exact
             let shot = OneShot(continuation)
             PHImageManager.default().requestImage(for: asset, targetSize: size, contentMode: .aspectFit, options: options) { image, _ in
                 shot.resume(returning: image)
             }
         }
+    }
+
+    /// 取**原图**（按需缩放到 maxPixel 长边，避免解码十几 MB 的 HEIC）。
+    /// 用 ImageIO 的 thumbnail 接口，只解一次缩略，不整张解码。
+    static func originalImage(for asset: PHAsset, maxPixel: CGFloat = 2400) async -> UIImage? {
+        guard let data = try? await imageData(for: asset),
+              let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return UIImage(cgImage: cgImage)
     }
 
     /// 资产对应的 CGImage（用于送检模型）。

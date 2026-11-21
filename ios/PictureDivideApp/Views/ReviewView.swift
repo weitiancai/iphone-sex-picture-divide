@@ -249,7 +249,7 @@ private struct GridThumbnail: View {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .blur(radius: blurred ? 12 : 0)
+                    .blur(radius: blurred ? 10 : 0)
             } else {
                 Rectangle().fill(.quaternary)
                     .overlay(ProgressView().scaleEffect(0.6))
