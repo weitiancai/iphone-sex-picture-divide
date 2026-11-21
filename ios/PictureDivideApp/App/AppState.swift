@@ -32,6 +32,8 @@ final class AppState: ObservableObject {
     @Published var cursorDate: Date?
 
     private var cursor = ScanCursor.load()
+    /// 历史检测记录（跨重启保留，按 localIdentifier 去重）。
+    private let detectionStore = DetectionStore()
     @Published var scanRange: ScanRange = .last30Days
     /// 自定义区间的起始月 / 结束月。
     @Published var customStart: Date = Calendar.current.date(byAdding: .month, value: -3, to: Date()) ?? Date()
@@ -58,6 +60,7 @@ final class AppState: ObservableObject {
         authorization = PhotoLibrary.authorizationStatus()
         loadDetector()
         refreshVaultItems()
+        loadHistory()
 
         // 命令行/自动化参数：
         //   --autoscan                     启动即扫描
@@ -91,6 +94,57 @@ final class AppState: ObservableObject {
                 startScan()
             }
         }
+    }
+
+    /// 把新一轮扫描结果并入现有列表（按 localIdentifier 去重：已存在则更新，不新增）。
+    private func mergeDetections(_ newItems: [FlaggedItem]) {
+        var indexByID: [String: Int] = [:]
+        for (i, item) in flagged.enumerated() { indexByID[item.id] = i }
+        for item in newItems {
+            if let idx = indexByID[item.id] {
+                var merged = item
+                merged.state = flagged[idx].state          // 保留已处理状态
+                merged.timesDetected = max(flagged[idx].timesDetected, item.timesDetected)
+                merged.previewImage = item.previewImage ?? flagged[idx].previewImage
+                merged.thumbnail = item.thumbnail ?? flagged[idx].thumbnail
+                flagged[idx] = merged
+            } else {
+                indexByID[item.id] = flagged.count
+                flagged.append(item)
+            }
+        }
+        flagged.sort { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
+    }
+
+    /// 从磁盘载入历史检测记录（去重后的）。
+    private func loadHistory() {
+        let records = detectionStore.load()
+        let items: [FlaggedItem] = records
+            .filter { $0.state == "pending" || $0.state == "moved" }
+            .map { record in
+                FlaggedItem(id: record.id,
+                            creationDate: record.creationDate,
+                            score: record.score,
+                            regions: record.regions,
+                            engine: DetectionResult.Engine(rawValue: record.engine) ?? .moderator,
+                            tier: record.tier,
+                            timesDetected: record.timesDetected,
+                            thumbnail: detectionStore.thumbnail(for: record),
+                            previewImage: nil,
+                            state: record.state == "moved" ? .moved : .pending)
+            }
+            .sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
+        flagged = items
+        NSLog("[PictureDivide] 载入历史记录 %d 条", items.count)
+    }
+
+    /// 清空历史记录（设置页用）。
+    func clearHistory() {
+        detectionStore.removeAll()
+        flagged.removeAll()
+        cursor = ScanCursor()
+        ScanCursor.clear()
+        cursorDate = nil
     }
 
     /// 重新加载检测模型（切换扫描速度 / 引擎时调用）。
@@ -167,6 +221,7 @@ final class AppState: ObservableObject {
 
             var found: [FlaggedItem] = []
             let suspectThreshold = self.suspectThreshold
+            let logScores = ProcessInfo.processInfo.arguments.contains("--log-scores")
             let includeSuspected = self.includeSuspected
             let explicitThreshold = self.threshold
 
@@ -184,11 +239,21 @@ final class AppState: ObservableObject {
                                               regions: result.regions,
                                               explicitThreshold: explicitThreshold,
                                               suspectThreshold: suspectThreshold)
+                    if logScores {
+                        NSLog("[PictureDivide][score] moderator=%.3f %@", result.score, result.extra ?? "")
+                    }
                     let hit = result.isSensitive || (includeSuspected && tier == .suspected)
                     if hit {
                         NSLog("[PictureDivide] 命中[%@]：score=%.3f %@", tier.rawValue, result.score, result.extra ?? result.regions.detectedParts.joined(separator: "/"))
                         let thumbnail = await PhotoLibrary.thumbnail(for: asset)
                         let preview = await PhotoLibrary.preview(for: asset)
+                        let stored = detectionStore.upsert(id: asset.localIdentifier,
+                                              creationDate: asset.creationDate,
+                                              score: result.score,
+                                              regions: result.regions,
+                                              tier: tier,
+                                              engine: result.engine.rawValue,
+                                              thumbnail: thumbnail)
                         found.append(FlaggedItem(id: asset.localIdentifier,
                                                  creationDate: asset.creationDate,
                                                  score: result.score,
@@ -220,7 +285,7 @@ final class AppState: ObservableObject {
             BackgroundSupport.endBackgroundTask()
             let wasCancelled = Task.isCancelled
             await MainActor.run {
-                self.flagged.append(contentsOf: found)
+                self.mergeDetections(found)
                 self.progress.isRunning = false
                 self.progress.currentAsset = nil
                 self.lastScanFinishedAt = Date()
@@ -297,6 +362,7 @@ final class AppState: ObservableObject {
         if let index = flagged.firstIndex(where: { $0.id == id }) {
             flagged[index].state = state
         }
+        detectionStore.setState(id: id, state: state.rawValue)
     }
 
     private nonisolated static func asset(for localIdentifier: String) -> PHAsset? {

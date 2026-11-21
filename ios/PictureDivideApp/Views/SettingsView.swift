@@ -26,6 +26,16 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                Section("检测历史") {
+                    LabeledContent("已记录", value: "\(state.flagged.count) 条")
+                    Text("检测结果会存在本机（Application Support），重复扫描同一张只会累加次数，不会重复出现；闪退或重启 App 也不会丢。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button("清空检测历史", role: .destructive) {
+                        state.clearHistory()
+                    }
+                }
+
                 Section("保险箱") {
                     LabeledContent("条目数", value: "\(state.vaultItems.count)")
                     Text("内容用 ChaCha20-Poly1305 加密，密钥存在 Keychain（仅本机、解锁后可用）。删除 App 会连同密钥一起消失，箱内内容无法恢复——这是设计如此。")

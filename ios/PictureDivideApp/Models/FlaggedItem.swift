@@ -13,6 +13,8 @@ struct FlaggedItem: Identifiable, Hashable {
     var engine: DetectionResult.Engine
     /// 敏感程度分档（明确色情 / 疑似暴露）。
     var tier: SensitivityTier = .explicit
+    /// 一共被检出过几次（多次扫描会累加，用于去重展示）。
+    var timesDetected: Int = 1
     /// 列表里显示的小图（已默认打码）。
     var thumbnail: UIImage?
     var previewImage: UIImage?

@@ -93,6 +93,11 @@ struct ReviewView: View {
                         .padding(.vertical, 1)
                         .background(tierColor(item.tier).opacity(0.25))
                         .foregroundStyle(tierColor(item.tier))
+                    if item.timesDetected > 1 {
+                        Text("×\(item.timesDetected)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                     if !item.detectedParts.isEmpty {
                         Text(item.detectedParts.joined(separator: " · "))
                             .font(.caption)

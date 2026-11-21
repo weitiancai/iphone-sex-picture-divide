@@ -95,6 +95,7 @@ public final class CompositeDetector: ContentDetector, @unchecked Sendable {
             let o = try await openNSFW.detect(image: image, policy: policy, threshold: override)
             // AND 逻辑：两个模型都说是敏感，才算敏感。
             let both = m.isSensitive && o.isSensitive
+            NSLog("[PictureDivide][dual] moderator=%.3f openNSFW=%.3f", m.score, o.score)
             return DetectionResult(score: min(m.score, o.score),
                                    regions: m.regions,
                                    isSensitive: both,
