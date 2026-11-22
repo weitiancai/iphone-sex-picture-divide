@@ -59,6 +59,10 @@ final class ThumbnailProvider {
     }
 
     static func asset(for id: String) -> PHAsset? {
-        PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject
+        // 已隐藏的资源默认查不到，必须显式带上
+        let options = PHFetchOptions()
+        options.includeHiddenAssets = true
+        options.includeAllBurstAssets = true
+        return PHAsset.fetchAssets(withLocalIdentifiers: [id], options: options).firstObject
     }
 }

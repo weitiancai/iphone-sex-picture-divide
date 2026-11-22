@@ -28,7 +28,15 @@ struct ReviewView: View {
                             grid(for: pending)
 
                             if !moved.isEmpty {
-                                header("已加入隐私相册（\(moved.count)）")
+                                HStack {
+                                    header("已加入隐私相册（\(moved.count)）")
+                                    Spacer()
+                                    Button("清空") {
+                                        state.resetMovedItems()
+                                    }
+                                    .font(.caption)
+                                    .buttonStyle(.bordered)
+                                }
                                 grid(for: moved, dimmed: true)
                             }
                             if state.ignoredCount > 0 {

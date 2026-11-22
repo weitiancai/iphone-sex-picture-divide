@@ -116,6 +116,52 @@ final class AppState: ObservableObject {
             }
         }
 
+        // 自检：--hide-verify 用公开 API 隐藏一张真实照片，并以「已隐藏」智能相簿为准做验证。
+        if args.contains("--hide-verify") {
+            Task { @MainActor in
+                NSLog("[verify] 系统「已隐藏」相簿现有 %d 张", PhotoLibrary.hiddenAssets().count)
+                guard let target = flagged.first(where: { $0.state == .pending }) ?? flagged.first,
+                      let asset = Self.asset(for: target.id) else {
+                    NSLog("[verify] 没有可用资源"); return
+                }
+                NSLog("[verify] 目标 %@（原 isHidden=%@）", target.id, PhotoLibrary.isHidden(asset) ? "Y" : "N")
+                do {
+                    try await PhotoLibrary.setHiddenPublic(true, for: asset)
+                } catch {
+                    NSLog("[verify] 设置失败: %@", error.localizedDescription); return
+                }
+                for wait in [0.5, 1.5, 3.0] {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    NSLog("[verify] 等待 %.1fs：已隐藏相簿里有=%@ 该资源在相簿=%@ 相簿总数=%d",
+                          wait,
+                          PhotoLibrary.hiddenAssets().count > 0 ? "YES" : "NO",
+                          PhotoLibrary.isVerifiedHidden(asset) ? "YES" : "NO",
+                          PhotoLibrary.hiddenAssets().count)
+                }
+            }
+        }
+
+        // 自检：--album-scan 列出所有智能相簿，找出“已隐藏”那一个到底怎么读。
+        if args.contains("--album-scan") {
+            Task { @MainActor in
+                NSLog("[scan] ① 所有智能相簿：")
+                let all = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .any, options: nil)
+                all.enumerateObjects { c, _, _ in
+                    let sub = c.assetCollectionSubtype.rawValue
+                    let n1 = PHAsset.fetchAssets(in: c, options: nil).count
+                    let o = PHFetchOptions(); o.includeHiddenAssets = true
+                    let n2 = PHAsset.fetchAssets(in: c, options: o).count
+                    NSLog("[scan]   subtype=%d %@  普通=%d 含隐藏=%d", sub, c.localizedTitle ?? "?", n1, n2)
+                }
+                NSLog("[scan] ② 全量资源里 isHidden=YES 的数量：")
+                let o2 = PHFetchOptions(); o2.includeHiddenAssets = true
+                let allAssets = PHAsset.fetchAssets(with: .image, options: o2)
+                var hidden = 0
+                allAssets.enumerateObjects { a, _, _ in if a.isHidden { hidden += 1 } }
+                NSLog("[scan]   共 %d 张，其中隐藏 %d 张", allAssets.count, hidden)
+            }
+        }
+
         // 调试/自动化用：启动参数 --autoscan 会自动开扫，方便命令行验证。
         if args.contains("--autoscan") {
             if authorization == .notDetermined {
@@ -423,20 +469,19 @@ final class AppState: ObservableObject {
             if #available(iOS 27.0, *) {
                 // 打标签总是可以的（实测有效）
                 tagged = (try? await PhotoLibrary.addKeyword("隐私", to: asset)) ?? false
-                // 直接隐藏需要 Sensitive Content Analysis entitlement；
-                // 免费个人账号没有 → 系统会“接受但不生效”且很慢，所以只探测一次。
-                if PhotoLibrary.knownCanHideDirectly != false {
-                    _ = try? await PhotoLibrary.setHiddenPublic(true, for: asset)
-                    try? await Task.sleep(nanoseconds: 600_000_000)
-                    hiddenDirectly = PhotoLibrary.isHidden(asset)
-                    PhotoLibrary.knownCanHideDirectly = hiddenDirectly
-                    if !hiddenDirectly {
-                        NSLog("[PictureDivide] 本机不支持程序化隐藏（缺 entitlement），以后只用相簿方案")
-                    }
+                // 直接隐藏：官方文档说这是 iOS 8 就有的公开 API。
+                // 设置完要用「已隐藏」智能相簿的内容来验证（读属性不可靠）。
+                _ = try? await PhotoLibrary.setHiddenPublic(true, for: asset)
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                hiddenDirectly = PhotoLibrary.isVerifiedHidden(asset)
+                PhotoLibrary.knownCanHideDirectly = hiddenDirectly
+                if !hiddenDirectly {
+                    NSLog("[PictureDivide] 直接隐藏未生效（已隐藏相簿里没有它），改用相簿归类")
                 }
             }
 
             offerOpenPhotos = !hiddenDirectly
+            refreshHiddenPhotos()
             toast = hiddenDirectly
                 ? "已移入系统「已隐藏」相簿\(tagged ? "，并打了「隐私」标签" : "")"
                 : "已归入系统相簿「\(albumTitle)」\(tagged ? "（并打了「隐私」标签）" : "")。\n在「照片 → 相簿 → \(albumTitle)」里全选后点「隐藏」，就会进入系统的「已隐藏」（Face ID 保护）。"
@@ -512,6 +557,26 @@ final class AppState: ObservableObject {
         hiddenPhotos = PhotoLibrary.hiddenAssets()
     }
 
+    /// 刷新每条记录“是否已在系统「已隐藏」”的状态（以系统相簿内容为准）。
+    func refreshHiddenStates() {
+        let hiddenIDs = Set(PhotoLibrary.hiddenAssets().map(\.localIdentifier))
+        guard !hiddenIDs.isEmpty else {
+            for index in flagged.indices where flagged[index].isHiddenInSystem {
+                flagged[index].isHiddenInSystem = false
+            }
+            return
+        }
+        for index in flagged.indices {
+            if hiddenIDs.contains(flagged[index].id) {
+                flagged[index].isHiddenInSystem = true
+                if flagged[index].state == .pending {
+                    flagged[index].state = .moved
+                    detectionStore.setState(id: flagged[index].id, state: FlaggedItem.State.moved.rawValue)
+                }
+            }
+        }
+    }
+
     /// 批量操作
 
     /// 批量加入隐私相册（归入系统相簿；iOS 27+ 顺带直接隐藏）。
@@ -533,6 +598,17 @@ final class AppState: ObservableObject {
             batchProgress = Double(index + 1) / Double(max(items.count, 1))
         }
         batchProgress = 0
+    }
+
+    /// 清空「已加入隐私相册」分组：把这些项恢复成待处理（可以再次处理/再次扫描）。
+    func resetMovedItems() {
+        var count = 0
+        for index in flagged.indices where flagged[index].state == .moved {
+            flagged[index].state = .pending
+            detectionStore.setState(id: flagged[index].id, state: FlaggedItem.State.pending.rawValue)
+            count += 1
+        }
+        NSLog("[PictureDivide] 清空已加入隐私相册：%d 张", count)
     }
 
     /// 批量标记为“不要处理”（误报/无需处理），原图一律不动。
@@ -604,7 +680,12 @@ final class AppState: ObservableObject {
     }
 
     private nonisolated static func asset(for localIdentifier: String) -> PHAsset? {
-        PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject
+        // ⚠️ 必须带 includeHiddenAssets：照片被隐藏后，系统默认不再返回它，
+        //    否则会误报“找不到这张照片”。
+        let options = PHFetchOptions()
+        options.includeHiddenAssets = true
+        options.includeAllBurstAssets = true
+        return PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: options).firstObject
     }
 
     // MARK: - 保险箱

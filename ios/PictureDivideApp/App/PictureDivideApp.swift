@@ -26,6 +26,8 @@ struct PictureDivideApp: App {
                     if state.scanInterrupted && !state.progress.isRunning {
                         state.startScan()
                     }
+                    state.refreshHiddenStates()
+                    state.refreshHiddenPhotos()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: BackgroundSupport.backgroundScanNotification)) { _ in
                     // 系统在后台唤起扫描任务。
