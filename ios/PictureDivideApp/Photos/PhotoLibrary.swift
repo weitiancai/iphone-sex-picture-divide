@@ -173,11 +173,32 @@ enum PhotoLibrary {
     //   把资源归进一个**系统相簿**（公开 API，任何系统版本都支持），
     //   由用户在系统相册里对该相簿「全选 → 隐藏」。
 
-    /// 找到（或创建）指定标题的系统相簿。
+    /// 找到指定标题的系统相簿。
+    ///
+    /// 注意：PhotoKit 的相簿**不支持用 predicate 按 title 查**（实测查不到），
+    /// 所以这里把所有相簿拉出来在 Swift 里按标题比对。
     static func album(named title: String) -> PHAssetCollection? {
         let options = PHFetchOptions()
-        options.predicate = NSPredicate(format: "title = %@", title)
-        return PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: options).firstObject
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        let collections = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: options)
+        var match: PHAssetCollection?
+        collections.enumerateObjects { collection, _, _ in
+            if collection.localizedTitle == title {
+                match = collection
+            }
+        }
+        return match
+    }
+
+    /// 所有用户相簿（调试用）：标题 + id + 张数。
+    static func allAlbums() -> [String] {
+        var titles: [String] = []
+        PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: nil)
+            .enumerateObjects { c, _, _ in
+                let n = PHAsset.fetchAssets(in: c, options: nil).count
+                titles.append("\(c.localizedTitle ?? "?") [\(c.localIdentifier)] \(n)张")
+            }
+        return titles
     }
 
     /// 把资源加入指定相簿（相簿不存在则创建）。
@@ -214,6 +235,7 @@ enum PhotoLibrary {
                 else { continuation.resume(throwing: error ?? PhotoError.changeFailed) }
             })
         }
+
     }
 
     /// 相簿里的资源。
@@ -221,9 +243,8 @@ enum PhotoLibrary {
         guard let collection = album(named: title) else { return [] }
         let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-        if #available(iOS 27.0, *) {
-            options.includeHiddenAssets = true   // 已隐藏的也要能看到（否则隐藏后就从列表消失了）
-        }
+        // ⚠️ 不要设 includeHiddenAssets：iOS 27 上它对相簿查询的行为是「只返回已隐藏的」，
+        //    会导致相册页查不到刚加进去的普通照片（实测 1 张 → 查成 0 张）。
         var result: [PHAsset] = []
         PHAsset.fetchAssets(in: collection, options: options).enumerateObjects { asset, _, _ in
             result.append(asset)
@@ -231,7 +252,20 @@ enum PhotoLibrary {
         return result
     }
 
-    /// iOS 27+：直接设为「已隐藏」。iOS 26 及以下返回 false。
+    /// 本机是否具备「程序化隐藏」能力。
+    ///
+    /// iOS 27 的 `PHAssetChangeRequest.isHidden` 需要 Sensitive Content Analysis entitlement，
+    /// 而**免费个人开发团队不支持该能力**（Xcode 会直接拒绝签发）→ 调用会“接受但不生效”，
+    /// 而且很慢（实测 20 秒+）。所以只探测一次，把结果记下来，之后不再尝试。
+    private static let capabilityKey = "com.picturedivide.canHideDirectly"
+
+    /// 已知能力（nil = 还没试过）。
+    static var knownCanHideDirectly: Bool? {
+        get { UserDefaults.standard.object(forKey: capabilityKey) as? Bool }
+        set { UserDefaults.standard.set(newValue, forKey: capabilityKey) }
+    }
+
+    /// iOS 27+：直接设为「已隐藏」。返回 false 表示这台机器/这个账号不具备该能力。
     @discardableResult
     static func setHiddenPublic(_ hidden: Bool, for asset: PHAsset) async throws -> Bool {
         if #available(iOS 27.0, *) {

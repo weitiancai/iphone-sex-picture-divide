@@ -29,6 +29,9 @@ struct StoredDetection: Codable, Identifiable, Equatable {
 /// - 缩略图写在 `Application Support/PictureDivideThumbs/`
 /// - 按 `localIdentifier` 去重：同一张照片被反复扫到只保留一条，累加 `timesDetected`
 final class DetectionStore {
+    /// 全局单例（并发扫描时多处写入）。
+    static let shared = DetectionStore()
+
     private let fileURL: URL
     private let thumbsDir: URL
     private let queue = DispatchQueue(label: "com.picturedivide.detectionStore")

@@ -43,8 +43,12 @@ final class AppState: ObservableObject {
 
     private var cursor = ScanCursor.load()
     /// 历史检测记录（跨重启保留，按 localIdentifier 去重）。
-    private let detectionStore = DetectionStore()
+    private let detectionStore = DetectionStore.shared
     @Published var scanRange: ScanRange = .last30Days
+    /// 增量模式：只扫上次之后新增的照片（配合游标）。
+    @Published var incrementalOnly: Bool = true
+    /// 并发数（越大越快，但更吃电/内存）。
+    @Published var concurrency: Int = 4
     /// 自定义区间的起始月 / 结束月。
     @Published var customStart: Date = Calendar.current.date(byAdding: .month, value: -3, to: Date()) ?? Date()
     @Published var customEnd: Date = Date()
@@ -92,31 +96,18 @@ final class AppState: ObservableObject {
            let value = ScanPolicy(rawValue: args[index + 1]) {
             policy = value
         }
-        // 自检：--ios27-test 在 iOS 27 上验证「公开 API 隐藏 / 读回 / 标签」是否全部可用。
+        // 自检：--ios27-test 报告本机是否具备“程序化隐藏”能力（只读探测，不改数据）。
         if args.contains("--ios27-test") {
             Task { @MainActor in
-                NSLog("[ios27] 系统版本: %@", UIDevice.current.systemVersion)
-                let assets = PHAsset.fetchAssets(with: .image, options: nil)
-                guard let asset = assets.firstObject else {
-                    NSLog("[ios27] 图库是空的"); return
-                }
-                let id = asset.localIdentifier
+                NSLog("[ios27] 系统: %@", UIDevice.current.systemVersion)
                 if #available(iOS 27.0, *) {
-                    NSLog("[ios27] 公开 API 可用 ✓（isHidden / addKeyword / includeHiddenAssets）")
-                    do {
-                        try await PhotoLibrary.setHiddenPublic(true, for: asset)
-                        let readBack = PhotoLibrary.isHidden(asset)
-                        NSLog("[ios27] 隐藏后 isHidden=%@", readBack ? "YES" : "NO")
-                        let tagged = (try? await PhotoLibrary.addKeyword("隐私", to: asset)) ?? false
-                        NSLog("[ios27] 打标签=%@ 关键词=%@", tagged ? "成功" : "失败", PhotoLibrary.keywords(of: asset))
-                        let hiddenList = PhotoLibrary.hiddenAssets()
-                        NSLog("[ios27] 系统已隐藏列表 %d 张", hiddenList.count)
-                        // 还原
-                        try await PhotoLibrary.setHiddenPublic(false, for: asset)
-                        NSLog("[ios27] 已还原 isHidden=%@", PhotoLibrary.isHidden(asset) ? "YES" : "NO")
-                    } catch {
-                        NSLog("[ios27] 失败: %@", error.localizedDescription)
-                    }
+                    NSLog("[ios27] 公开 API 存在（isHidden / addKeyword / includeHiddenAssets）")
+                    NSLog("[ios27] 本机可程序化隐藏 = %@（有则 true；免费个人账号为 false）",
+                          PhotoLibrary.knownCanHideDirectly.map { $0 ? "YES" : "NO" } ?? "未探测")
+                    NSLog("[ios27] 系统已隐藏 %d 张；相簿「%@」%d 张",
+                          PhotoLibrary.hiddenAssets().count,
+                          albumTitle,
+                          PhotoLibrary.assets(inAlbumTitled: albumTitle).count)
                 } else {
                     NSLog("[ios27] 当前系统没有公开 API（需要 iOS 27）")
                 }
@@ -246,81 +237,63 @@ final class AppState: ObservableObject {
             guard let self else { return }
             let start = range == .custom ? ScanRange.monthStart(self.customStart) : range.startDate
             let end = range == .custom ? ScanRange.monthEnd(self.customEnd) : nil
-            var assets = Self.fetchAssets(start: start, end: end)
-            if resumeEnabled, let last = cursor.lastDate {
-                let skipped = assets.count
-                assets = assets.filter { asset in
-                    guard let d = asset.creationDate else { return true }
-                    return d >= last
-                }
-                NSLog("[PictureDivide] 断点续扫：跳过 %d 张，从 %@ 开始", skipped - assets.count, last.formatted())
+            let useCursor = incrementalOnly && resumeEnabled ? cursor.lastDate : nil
+            let assets = Self.fetchAssets(start: start, end: end, cursorDate: useCursor, skipHidden: true)
+            if let useCursor {
+                NSLog("[PictureDivide] 增量模式：只扫 %@ 之后新增的 %d 张", useCursor.formatted(), assets.count)
+            } else {
+                NSLog("[PictureDivide] 全量模式：待扫 %d 张", assets.count)
             }
             await MainActor.run { self.cursorDate = cursor.lastDate }
             await MainActor.run { self.progress.total = assets.count }
 
             var found: [FlaggedItem] = []
             let suspectThreshold = self.suspectThreshold
-            let logScores = ProcessInfo.processInfo.arguments.contains("--log-scores")
             let includeSuspected = self.includeSuspected
             let explicitThreshold = self.threshold
+            let logScores = ProcessInfo.processInfo.arguments.contains("--log-scores")
+            let detector = detector
+            let limit = max(1, min(self.concurrency, 8))
 
             // 切后台 / 息屏时申请一段额外时间；被系统收回时中止并保存断点。
             BackgroundSupport.beginBackgroundTask { [weak self] in
                 self?.scanTask?.cancel()
             }
 
-            for (index, asset) in assets.enumerated() {
-                if Task.isCancelled { break }
-                guard let cgImage = await PhotoLibrary.cgImage(for: asset) else { continue }
-                do {
-                    let result = try await detector.detect(image: cgImage, policy: policy, threshold: threshold)
-                    let tier = TierPolicy.tier(score: result.score,
-                                              regions: result.regions,
-                                              explicitThreshold: explicitThreshold,
-                                              suspectThreshold: suspectThreshold)
-                    if logScores {
-                        NSLog("[PictureDivide][score] moderator=%.3f %@", result.score, result.extra ?? "")
+            // 并发处理（CoreML 预测本身是线程安全的），大幅缩短 1 万张的扫描时间
+            await withTaskGroup(of: FlaggedItem?.self) { group in
+                var next = 0
+                var running = 0
+                var done = 0
+                while next < assets.count || running > 0 {
+                    while running < limit && next < assets.count {
+                        let asset = assets[next]
+                        next += 1
+                        running += 1
+                        group.addTask { [weak self] in
+                            await Self.process(asset: asset,
+                                              detector: detector,
+                                              policy: policy,
+                                              threshold: explicitThreshold,
+                                              suspectThreshold: suspectThreshold,
+                                              includeSuspected: includeSuspected,
+                                              logScores: logScores)
+                        }
                     }
-                    let hit = result.isSensitive || (includeSuspected && tier == .suspected)
-                    if hit {
-                        NSLog("[PictureDivide] 命中[%@]：score=%.3f %@", tier.rawValue, result.score, result.extra ?? result.regions.detectedParts.joined(separator: "/"))
-                        let thumbnail = await PhotoLibrary.thumbnail(for: asset)
-                        let preview = await PhotoLibrary.preview(for: asset)
-                        let stored = detectionStore.upsert(id: asset.localIdentifier,
-                                              creationDate: asset.creationDate,
-                                              score: result.score,
-                                              regions: result.regions,
-                                              tier: tier,
-                                              engine: result.engine.rawValue,
-                                              thumbnail: thumbnail)
-                        found.append(FlaggedItem(id: asset.localIdentifier,
-                                                 creationDate: asset.creationDate,
-                                                 score: result.score,
-                                                 regions: result.regions,
-                                                 engine: result.engine,
-                                                 tier: tier,
-                                                 thumbnail: thumbnail,
-                                                 previewImage: preview))
+                    if let item = await group.next() {
+                        running -= 1
+                        done += 1
+                        if let item { found.append(item) }
                     }
-                } catch {
-                    await MainActor.run { self.scanError = error.localizedDescription }
-                    NSLog("[PictureDivide] 单张检测失败：%@", error.localizedDescription)
-                }
-                let scanned = index + 1
-                let current = found.count
-                await MainActor.run {
-                    self.progress.scanned = scanned
-                    self.progress.found = current
-                }
-                if scanned % 10 == 0 {
-                    cursor.lastDate = asset.creationDate
-                    cursor.lastIdentifier = asset.localIdentifier
-                    cursor.save()
-                }
-                if scanned % 25 == 0 {
-                    NSLog("[PictureDivide] 扫描进度 %d/%d，命中 %d", scanned, assets.count, current)
+                    if done % 50 == 0 {
+                        await MainActor.run {
+                            self.progress.scanned = done
+                            self.progress.found = found.count
+                        }
+                    }
                 }
             }
+
             BackgroundSupport.endBackgroundTask()
             let wasCancelled = Task.isCancelled
             await MainActor.run {
@@ -351,7 +324,58 @@ final class AppState: ObservableObject {
         cursorDate = nil
     }
 
-    private nonisolated static func fetchAssets(start: Date?, end: Date?) -> [PHAsset] {
+    /// 处理单个资源：取图 → 检测 → 记录。返回命中的项（未命中返回 nil）。
+    private nonisolated static func process(asset: PHAsset,
+                                           detector: ContentDetector,
+                                           policy: ScanPolicy,
+                                           threshold: Double,
+                                           suspectThreshold: Double,
+                                           includeSuspected: Bool,
+                                           logScores: Bool) async -> FlaggedItem? {
+        guard let cgImage = await PhotoLibrary.cgImage(for: asset) else { return nil }
+        do {
+            let result = try await detector.detect(image: cgImage, policy: policy, threshold: threshold)
+            let tier = TierPolicy.tier(score: result.score,
+                                      regions: result.regions,
+                                      explicitThreshold: threshold,
+                                      suspectThreshold: suspectThreshold)
+            let hit = result.isSensitive || (includeSuspected && tier == .suspected)
+            guard hit else { return nil }
+            if logScores {
+                NSLog("[PictureDivide][score] %.3f %@", result.score, result.extra ?? "")
+            }
+            NSLog("[PictureDivide] 命中[%@]：score=%.3f %@", tier.rawValue, result.score,
+                  result.extra ?? result.regions.detectedParts.joined(separator: "/"))
+            let thumbnail = await PhotoLibrary.thumbnail(for: asset)
+            let preview = await PhotoLibrary.preview(for: asset)
+            let stored = await MainActor.run { () -> StoredDetection in
+                DetectionStore.shared.upsert(id: asset.localIdentifier,
+                                             creationDate: asset.creationDate,
+                                             score: result.score,
+                                             regions: result.regions,
+                                             tier: tier,
+                                             engine: result.engine.rawValue,
+                                             thumbnail: thumbnail)
+            }
+            return FlaggedItem(id: asset.localIdentifier,
+                                creationDate: asset.creationDate,
+                                score: result.score,
+                                regions: result.regions,
+                                engine: result.engine,
+                                tier: tier,
+                                timesDetected: stored.timesDetected,
+                                thumbnail: thumbnail,
+                                previewImage: preview)
+        } catch {
+            NSLog("[PictureDivide] 单张检测失败：%@", error.localizedDescription)
+            return nil
+        }
+    }
+
+    /// 取待扫描的资源。
+    /// - 增量：只取游标之后新增的
+    /// - 跳过已隐藏：iOS 起系统默认不返回已隐藏资源，这里再显式过滤一次
+    private nonisolated static func fetchAssets(start: Date?, end: Date?, cursorDate: Date?, skipHidden: Bool) -> [PHAsset] {
         let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
         if let start, let end {
@@ -365,7 +389,13 @@ final class AppState: ObservableObject {
         let result = PHAsset.fetchAssets(with: .image, options: options)
         var assets: [PHAsset] = []
         assets.reserveCapacity(result.count)
-        result.enumerateObjects { asset, _, _ in assets.append(asset) }
+        result.enumerateObjects { asset, _, _ in
+            // 增量：只取游标之后新增的
+            if let cursorDate, let d = asset.creationDate, d <= cursorDate { return }
+            // 跳过已隐藏的
+            if skipHidden && PhotoLibrary.isHidden(asset) { return }
+            assets.append(asset)
+        }
         return assets
     }
 
@@ -389,16 +419,24 @@ final class AppState: ObservableObject {
             var hiddenDirectly = false
             var tagged = false
             if #available(iOS 27.0, *) {
-                hiddenDirectly = (try? await PhotoLibrary.setHiddenPublic(true, for: asset)) ?? false
+                // 打标签总是可以的（实测有效）
                 tagged = (try? await PhotoLibrary.addKeyword("隐私", to: asset)) ?? false
-                if hiddenDirectly {
-                    // 已经是公开 API 隐藏的，相簿里就不必再留一份；但留着方便用户找回来。
+                // 直接隐藏需要 Sensitive Content Analysis entitlement；
+                // 免费个人账号没有 → 系统会“接受但不生效”且很慢，所以只探测一次。
+                if PhotoLibrary.knownCanHideDirectly != false {
+                    _ = try? await PhotoLibrary.setHiddenPublic(true, for: asset)
+                    try? await Task.sleep(nanoseconds: 600_000_000)
+                    hiddenDirectly = PhotoLibrary.isHidden(asset)
+                    PhotoLibrary.knownCanHideDirectly = hiddenDirectly
+                    if !hiddenDirectly {
+                        NSLog("[PictureDivide] 本机不支持程序化隐藏（缺 entitlement），以后只用相簿方案")
+                    }
                 }
             }
 
             toast = hiddenDirectly
                 ? "已移入系统「已隐藏」相簿\(tagged ? "，并打了「隐私」标签" : "")"
-                : "已加入系统相簿「\(albumTitle)」—— 在系统相册里打开该相簿，全选后点「隐藏」即可"
+                : "已加入系统相簿「\(albumTitle)」\(tagged ? "（并打了「隐私」标签）" : "")。\n在「照片 → 相簿 → \(albumTitle)」里全选后点「隐藏」即可。"
             mark(item.id, state: .moved)
             refreshAlbumAssets()
             refreshHiddenPhotos()

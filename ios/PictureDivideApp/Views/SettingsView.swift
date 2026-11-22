@@ -26,6 +26,33 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                Section("扫描记录与提速") {
+                    Toggle("增量扫描（只扫新增的照片）", isOn: $state.incrementalOnly)
+                    if let cursor = state.cursorDate {
+                        LabeledContent("上次扫到", value: cursor.formatted(date: .abbreviated, time: .omitted))
+                    } else {
+                        Text("还没有扫描记录")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading) {
+                        HStack {
+                            Text("并发数")
+                            Spacer()
+                            Text("\(state.concurrency)").font(.body.monospacedDigit())
+                        }
+                        Slider(value: Binding(get: { Double(state.concurrency) },
+                                               set: { state.concurrency = Int($0) }),
+                               in: 1...8, step: 1)
+                    }
+                    Text("并发越高扫得越快（1 万张建议 4~6），但更耗电、更吃内存。已隐藏的照片会自动跳过。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button("清除扫描记录（下次从头扫）", role: .destructive) {
+                        state.resetCursor()
+                    }
+                }
+
                 Section("检测历史") {
                     LabeledContent("已记录", value: "\(state.flagged.count) 条")
                     Text("检测结果会存在本机（Application Support），重复扫描同一张只会累加次数，不会重复出现；闪退或重启 App 也不会丢。")

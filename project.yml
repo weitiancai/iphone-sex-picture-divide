@@ -71,6 +71,10 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         # 免费个人账号签不了 entitlement，所以这里故意不带 entitlements 文件
         # （用 Apple 官方 SensitiveContentAnalysis 才需要，详见 docs/build-and-testflight.md）
+        # 注意：iOS 27 的“程序化隐藏照片”需要 Sensitive Content Analysis entitlement，
+        # 而**免费个人开发团队不支持该能力**（Xcode 会直接拒绝签发）。
+        # 所以这里默认不带 entitlements；只有付费开发者账号才启用下面这行：
+        #   CODE_SIGN_ENTITLEMENTS: ios/PictureDivideApp/Support/PictureDivide.entitlements
         CODE_SIGN_ENTITLEMENTS: ""
       configs:
         Debug:
