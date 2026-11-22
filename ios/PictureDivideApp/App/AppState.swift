@@ -34,8 +34,10 @@ final class AppState: ObservableObject {
     @Published var batchProgress: Double = 0
     /// 系统「已隐藏」相簿里的照片。
     @Published var hiddenPhotos: [PHAsset] = []
-    /// 操作结果提示（顶部横幅）。
+    /// 操作结果提示（系统弹窗）。
     @Published var toast: String?
+    /// 提示里是否附带「打开系统照片」按钮（归类到相簿后引导用户去隐藏）。
+    @Published var offerOpenPhotos = false
     /// 系统相簿名（命中照片归到这个相簿，用户随后可整册隐藏）。
     @Published var albumTitle: String = "隐私相册"
     /// 该相簿里的照片。
@@ -434,9 +436,10 @@ final class AppState: ObservableObject {
                 }
             }
 
+            offerOpenPhotos = !hiddenDirectly
             toast = hiddenDirectly
                 ? "已移入系统「已隐藏」相簿\(tagged ? "，并打了「隐私」标签" : "")"
-                : "已加入系统相簿「\(albumTitle)」\(tagged ? "（并打了「隐私」标签）" : "")。\n在「照片 → 相簿 → \(albumTitle)」里全选后点「隐藏」即可。"
+                : "已归入系统相簿「\(albumTitle)」\(tagged ? "（并打了「隐私」标签）" : "")。\n在「照片 → 相簿 → \(albumTitle)」里全选后点「隐藏」，就会进入系统的「已隐藏」（Face ID 保护）。"
             mark(item.id, state: .moved)
             refreshAlbumAssets()
             refreshHiddenPhotos()

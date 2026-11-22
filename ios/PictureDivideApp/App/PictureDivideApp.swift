@@ -58,5 +58,21 @@ struct RootView: View {
                 .tabItem { Label("设置", systemImage: "gearshape") }
                 .tag(3)
         }
+        .alert("操作结果", isPresented: Binding(get: { state.toast != nil },
+                                          set: { if !$0 { state.toast = nil; state.offerOpenPhotos = false } })) {
+            if state.offerOpenPhotos {
+                Button("打开系统照片") {
+                    state.openSystemPhotos()
+                    state.offerOpenPhotos = false
+                    state.toast = nil
+                }
+            }
+            Button("好") {
+                state.toast = nil
+                state.offerOpenPhotos = false
+            }
+        } message: {
+            Text(state.toast ?? "")
+        }
     }
 }

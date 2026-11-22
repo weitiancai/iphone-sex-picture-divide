@@ -137,7 +137,10 @@ struct ReviewView: View {
     private func viewerActions(_ item: FlaggedItem) -> some View {
         HStack(spacing: 10) {
             Button {
-                Task { await state.addToPrivateAlbum(item) }
+                Task {
+                    await state.addToPrivateAlbum(item)
+                    dismissViewer()          // 处理完直接退回复核列表，不自动翻下一张
+                }
             } label: {
                 Label("加入隐私相册", systemImage: "lock.shield")
                     .frame(maxWidth: .infinity)
@@ -145,12 +148,20 @@ struct ReviewView: View {
             .buttonStyle(.borderedProminent)
 
             Button(role: .destructive) {
-                Task { await state.deleteOriginal(item) }
+                Task {
+                    await state.deleteOriginal(item)
+                    dismissViewer()
+                }
             } label: {
                 Label("删除", systemImage: "trash")
             }
             .buttonStyle(.bordered)
         }
+    }
+
+    /// 关闭全屏浏览器，回到复核列表。
+    private func dismissViewer() {
+        viewing = nil
     }
 
     // MARK: - 批量操作条
