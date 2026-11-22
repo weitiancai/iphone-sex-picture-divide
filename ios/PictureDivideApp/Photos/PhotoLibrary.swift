@@ -161,6 +161,170 @@ enum PhotoLibrary {
         }
     }
 
+
+
+    // MARK: - 系统相簿（分类） + 关键词标签 + 隐藏
+    //
+    // iOS 27 起 PhotoKit 公开了：
+    //   PHAssetChangeRequest.hidden   → 直接把资源移进系统「已隐藏」相簿
+    //   PHAssetChangeRequest.addKeyword(_:) → 打关键词标签
+    //   PHAsset.extendedMetadata.keywords → 读标签
+    // iOS 26 及以下没有这些公开 API，只能退而求其次：
+    //   把资源归进一个**系统相簿**（公开 API，任何系统版本都支持），
+    //   由用户在系统相册里对该相簿「全选 → 隐藏」。
+
+    /// 找到（或创建）指定标题的系统相簿。
+    static func album(named title: String) -> PHAssetCollection? {
+        let options = PHFetchOptions()
+        options.predicate = NSPredicate(format: "title = %@", title)
+        return PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: options).firstObject
+    }
+
+    /// 把资源加入指定相簿（相簿不存在则创建）。
+    static func addToAlbum(_ assets: [PHAsset], albumTitle: String) async throws {
+        guard !assets.isEmpty else { return }
+        var collection = album(named: albumTitle)
+
+        if collection == nil {
+            // 先创建
+            var placeholder: PHObjectPlaceholder?
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                PHPhotoLibrary.shared().performChanges({
+                    let request = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: albumTitle)
+                    placeholder = request.placeholderForCreatedAssetCollection
+                }, completionHandler: { success, error in
+                    if success { continuation.resume(returning: ()) }
+                    else { continuation.resume(throwing: error ?? PhotoError.changeFailed) }
+                })
+            }
+            guard let id = placeholder?.localIdentifier,
+                  let created = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [id], options: nil).firstObject else {
+                throw PhotoError.changeFailed
+            }
+            collection = created
+        }
+
+        guard let collection else { throw PhotoError.changeFailed }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            PHPhotoLibrary.shared().performChanges({
+                guard let request = PHAssetCollectionChangeRequest(for: collection) else { return }
+                request.addAssets(assets as NSArray)
+            }, completionHandler: { success, error in
+                if success { continuation.resume(returning: ()) }
+                else { continuation.resume(throwing: error ?? PhotoError.changeFailed) }
+            })
+        }
+    }
+
+    /// 相簿里的资源。
+    static func assets(inAlbumTitled title: String) -> [PHAsset] {
+        guard let collection = album(named: title) else { return [] }
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+        var result: [PHAsset] = []
+        PHAsset.fetchAssets(in: collection, options: options).enumerateObjects { asset, _, _ in
+            result.append(asset)
+        }
+        return result
+    }
+
+    /// iOS 27+：直接设为「已隐藏」。iOS 26 及以下返回 false。
+    @discardableResult
+    static func setHiddenPublic(_ hidden: Bool, for asset: PHAsset) async throws -> Bool {
+        if #available(iOS 27.0, *) {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                PHPhotoLibrary.shared().performChanges({
+                    let request = PHAssetChangeRequest(for: asset)
+                    request.isHidden = hidden
+                }, completionHandler: { success, error in
+                    if success { continuation.resume(returning: ()) }
+                    else { continuation.resume(throwing: error ?? PhotoError.changeFailed) }
+                })
+            }
+            return true
+        }
+        return false
+    }
+
+    /// iOS 27+：给资源打关键词标签。
+    @discardableResult
+    static func addKeyword(_ keyword: String, to asset: PHAsset) async throws -> Bool {
+        if #available(iOS 27.0, *) {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                PHPhotoLibrary.shared().performChanges({
+                    let request = PHAssetChangeRequest(for: asset)
+                    request.addKeyword(keyword)
+                }, completionHandler: { success, error in
+                    if success { continuation.resume(returning: ()) }
+                    else { continuation.resume(throwing: error ?? PhotoError.changeFailed) }
+                })
+            }
+            return true
+        }
+        return false
+    }
+
+    /// 读资源的关键词（iOS 27+）。
+    static func keywords(of asset: PHAsset) -> [String] {
+        if #available(iOS 27.0, *) {
+            return asset.extendedMetadata.keywords
+        }
+        return []
+    }
+
+    /// 打开系统相册 App（用于引导用户「全选 → 隐藏」）。
+    static func openSystemPhotos() {
+        guard let url = URL(string: "photos-redirect://") else { return }
+        UIApplication.shared.open(url)
+    }
+
+    // MARK: - 系统「已隐藏」相簿
+    //
+    // PhotoKit 的**公开 API 没有**把资源移进「已隐藏」的能力（头文件里连 hidden 都没有）。
+    // 但 iOS 运行时里存在私有入口：
+    //   PHAssetChangeRequest.setHidden: / isHidden
+    //   PHAsset.isHidden
+    // 这里用 KVC 调用（KVC 会正确处理 BOOL 的装箱），并在调用前检查 selector 是否存在，
+    // 不存在就返回错误而不是崩溃。
+    // ⚠️ 私有 API：不能上架 App Store，仅供自用。
+
+    /// 把资源移进系统「已隐藏」（或取消隐藏）。
+    static func setHidden(_ hidden: Bool, for asset: PHAsset) async throws {
+        let selector = NSSelectorFromString("setHidden:")
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            PHPhotoLibrary.shared().performChanges({
+                let request = PHAssetChangeRequest(for: asset)
+                guard request.responds(to: selector) else {
+                    continuation.resume(throwing: PhotoError.hiddenNotSupported)
+                    return
+                }
+                request.setValue(NSNumber(value: hidden), forKey: "hidden")
+            }) { success, error in
+                if success {
+                    continuation.resume(returning: ())
+                } else {
+                    continuation.resume(throwing: error ?? PhotoError.changeFailed)
+                }
+            }
+        }
+    }
+
+    /// 判断某个资源当前是否在「已隐藏」里。
+    static func isHidden(_ asset: PHAsset) -> Bool {
+        guard asset.responds(to: NSSelectorFromString("isHidden")) else { return false }
+        return (asset.value(forKey: "hidden") as? NSNumber)?.boolValue ?? false
+    }
+
+    /// 列出系统「已隐藏」里的照片。
+    static func hiddenAssets() -> [PHAsset] {
+        let result = PHAsset.fetchAssets(with: .image, options: nil)
+        var hidden: [PHAsset] = []
+        result.enumerateObjects { asset, _, _ in
+            if isHidden(asset) { hidden.append(asset) }
+        }
+        return hidden
+    }
+
     /// 重新编码一张图，剥掉 EXIF/GPS 等元数据（保险箱里只保留画面本身）。
     static func stripMetadata(from data: Data) -> Data {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
@@ -180,12 +344,16 @@ enum PhotoLibrary {
         case imageDataUnavailable
         case deleteFailed
         case saveFailed
+        case changeFailed
+        case hiddenNotSupported
 
         var errorDescription: String? {
             switch self {
             case .imageDataUnavailable: return "读取这张照片的数据失败（可能还在 iCloud 未下载）。"
             case .deleteFailed: return "从系统相册删除失败。"
             case .saveFailed: return "写回系统相册失败。"
+            case .changeFailed: return "修改系统相册失败。"
+            case .hiddenNotSupported: return "当前 iOS 版本不支持程序化移入「已隐藏」相簿。"
             }
         }
     }

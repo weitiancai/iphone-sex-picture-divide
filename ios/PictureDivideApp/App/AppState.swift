@@ -32,6 +32,14 @@ final class AppState: ObservableObject {
     @Published var cursorDate: Date?
     /// 批量操作进度（0~1）。
     @Published var batchProgress: Double = 0
+    /// 系统「已隐藏」相簿里的照片。
+    @Published var hiddenPhotos: [PHAsset] = []
+    /// 操作结果提示（顶部横幅）。
+    @Published var toast: String?
+    /// 系统相簿名（命中照片归到这个相簿，用户随后可整册隐藏）。
+    @Published var albumTitle: String = "隐私相册"
+    /// 该相簿里的照片。
+    @Published var albumAssets: [PHAsset] = []
 
     private var cursor = ScanCursor.load()
     /// 历史检测记录（跨重启保留，按 localIdentifier 去重）。
@@ -63,6 +71,8 @@ final class AppState: ObservableObject {
         loadDetector()
         refreshVaultItems()
         loadHistory()
+        refreshHiddenPhotos()
+        refreshAlbumAssets()
 
         // 命令行/自动化参数：
         //   --autoscan                     启动即扫描
@@ -82,10 +92,6 @@ final class AppState: ObservableObject {
            let value = ScanPolicy(rawValue: args[index + 1]) {
             policy = value
         }
-        loadDetector()
-        NSLog("[PictureDivide] 当前配置：engine=%@ threshold=%.2f policy=%@ quality=%@",
-              engineOption.rawValue, threshold, policy.rawValue, quality.rawValue)
-
         // 调试/自动化用：启动参数 --autoscan 会自动开扫，方便命令行验证。
         if args.contains("--autoscan") {
             if authorization == .notDetermined {
@@ -334,15 +340,48 @@ final class AppState: ObservableObject {
 
     // MARK: - 复核操作
 
-    /// ① 加入隐私相册（加密保险箱）：**不动系统相册里的原图**。
+    /// ① 加入隐私相册。
+    ///
+    /// - iOS 27+：用**公开 API** 直接移进系统「已隐藏」相簿，并打上关键词标签。
+    /// - iOS 26 及以下：公开 API 把照片归进**系统相簿**「隐私相册」，
+    ///   用户在系统相册里对该相簿「全选 → 隐藏」即可（iOS 不允许 App 代劳隐藏）。
     func addToPrivateAlbum(_ item: FlaggedItem) async {
-        do {
-            try await storeIntoVault(item, deleteOriginal: false)
-            mark(item.id, state: .moved)
-            refreshVaultItems()
-        } catch {
-            scanError = error.localizedDescription
+        guard let asset = Self.asset(for: item.id) else {
+            toast = "找不到这张照片（可能已被删除）"
+            return
         }
+        do {
+            // 先归入系统相簿（所有系统版本都支持，也是用户后续整册隐藏的抓手）
+            try await PhotoLibrary.addToAlbum([asset], albumTitle: albumTitle)
+
+            // iOS 27+ 还能直接设成「已隐藏」+ 打标签
+            var hiddenDirectly = false
+            var tagged = false
+            if #available(iOS 27.0, *) {
+                hiddenDirectly = (try? await PhotoLibrary.setHiddenPublic(true, for: asset)) ?? false
+                tagged = (try? await PhotoLibrary.addKeyword("隐私", to: asset)) ?? false
+            }
+
+            toast = hiddenDirectly
+                ? "已移入系统「已隐藏」相簿\(tagged ? "，并打了「隐私」标签" : "")"
+                : "已加入系统相簿「\(albumTitle)」—— 在系统相册里打开该相簿，全选后点「隐藏」即可"
+            mark(item.id, state: .moved)
+            refreshAlbumAssets()
+            refreshHiddenPhotos()
+        refreshAlbumAssets()
+        } catch {
+            toast = "加入失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// 刷新系统相簿「隐私相册」里的照片。
+    func refreshAlbumAssets() {
+        albumAssets = PhotoLibrary.assets(inAlbumTitled: albumTitle)
+    }
+
+    /// 打开系统相册（引导用户整册隐藏）。
+    func openSystemPhotos() {
+        PhotoLibrary.openSystemPhotos()
     }
 
     /// ② 只删除系统相册里的原图（保险箱里已有副本时，会标记“原图已删除”）。
@@ -353,26 +392,63 @@ final class AppState: ObservableObject {
         }
         do {
             try await PhotoLibrary.delete(asset: asset)
-            // 如果保险箱里已有这份照片，标记一下
-            if let vaultItem = vaultItems.first(where: { $0.assetIdentifier == item.id }) {
-                try? vault.setOriginalDeleted(id: vaultItem.id, deleted: true)
-            }
+            toast = "已从系统相册删除"
             mark(item.id, state: .moved)
-            refreshVaultItems()
+            refreshHiddenPhotos()
+        refreshAlbumAssets()
         } catch {
             scanError = error.localizedDescription
         }
     }
 
-    // MARK: - 批量操作
+    // MARK: - 系统「已隐藏」相簿
 
-    /// 批量加入隐私相册（保留原图）。
+    /// 打开系统相册，配合引导文案把照片移进系统「已隐藏」。
+    /// （系统不允许 App 代劳，只能一步步带着用户做。）
+    func openSystemPhotosGuide() {
+        guard let url = URL(string: "photos-redirect://") else { return }
+        UIApplication.shared.open(url)
+    }
+
+    /// 检查某张是否已经被用户手动藏进系统「已隐藏」。
+    func isHiddenInSystem(_ item: FlaggedItem) -> Bool {
+        guard let asset = Self.asset(for: item.id) else { return false }
+        return PhotoLibrary.isHidden(asset)
+    }
+
+    /// 取消隐藏（从「已隐藏」放回普通相册）。
+    func unhide(_ item: FlaggedItem) async {
+        guard let asset = Self.asset(for: item.id) else {
+            toast = "找不到这张照片"
+            return
+        }
+        do {
+            try await PhotoLibrary.setHidden(false, for: asset)
+            toast = "已移出「已隐藏」相簿"
+            refreshHiddenPhotos()
+        refreshAlbumAssets()
+        } catch {
+            toast = "操作失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// 刷新系统「已隐藏」列表。
+    func refreshHiddenPhotos() {
+        hiddenPhotos = PhotoLibrary.hiddenAssets()
+    }
+
+    /// 批量操作
+
+    /// 批量加入隐私相册（归入系统相簿；iOS 27+ 顺带直接隐藏）。
     func addToPrivateAlbum(_ items: [FlaggedItem]) async {
         for (index, item) in items.enumerated() {
             await addToPrivateAlbum(item)
             batchProgress = Double(index + 1) / Double(max(items.count, 1))
         }
         batchProgress = 0
+        refreshAlbumAssets()
+        refreshHiddenPhotos()
+        refreshAlbumAssets()
     }
 
     /// 批量删除系统相册原图。
@@ -417,15 +493,10 @@ final class AppState: ObservableObject {
         batchProgress = 0
     }
 
-    /// ③ 加入隐私相册 + 同时删除系统相册原图（一步到位）。
+    /// 加入隐私相册后再把系统相册里的原图删掉（顺序执行）。
     func addToPrivateAlbumAndDeleteOriginal(_ item: FlaggedItem) async {
-        do {
-            try await storeIntoVault(item, deleteOriginal: true)
-            mark(item.id, state: .moved)
-            refreshVaultItems()
-        } catch {
-            scanError = error.localizedDescription
-        }
+        await addToPrivateAlbum(item)
+        await deleteOriginal(item)
     }
 
     /// 存入保险箱（可选是否删除原图）。

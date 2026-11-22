@@ -36,6 +36,18 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("隐私相册（系统相簿）") {
+                    TextField("相簿名称", text: $state.albumTitle)
+                        .onChange(of: state.albumTitle) { _, _ in state.refreshAlbumAssets() }
+                    LabeledContent("相簿内照片", value: "\(state.albumAssets.count) 张")
+                    Text("命中的照片会归进系统相册里的这个相簿。到「照片 → 相簿 → 打开它 → 全选 → 隐藏」，就能整册移进系统的「已隐藏」（Face ID 保护）。iOS 27 起本 App 可以直接调用公开 API 设成已隐藏，不用手动操作。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button("刷新相簿") {
+                        state.refreshAlbumAssets()
+                    }
+                }
+
                 Section("保险箱") {
                     LabeledContent("条目数", value: "\(state.vaultItems.count)")
                     Text("内容用 ChaCha20-Poly1305 加密，密钥存在 Keychain（仅本机、解锁后可用）。删除 App 会连同密钥一起消失，箱内内容无法恢复——这是设计如此。")

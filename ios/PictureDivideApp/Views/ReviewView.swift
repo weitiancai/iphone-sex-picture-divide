@@ -9,7 +9,7 @@ struct ReviewView: View {
     @State private var selection: Set<String> = []
     @State private var selecting = false
     @State private var viewing: FlaggedItem?
-    @State private var blurred = true
+    @State private var blurred = false
     @State private var busy = false
 
     private var pending: [FlaggedItem] { state.flagged.filter { $0.state == .pending } }
@@ -71,7 +71,7 @@ struct ReviewView: View {
             .fullScreenCover(item: $viewing) { item in
                 FullScreenViewer(items: pending.isEmpty ? [item] : pending,
                                  startID: item.id,
-                                 isBlurred: false,
+                                 isBlurred: blurred,
                                  loadPreview: { item in
                                      if let thumb = item.thumbnail { return thumb }
                                      return await ThumbnailProvider.shared.thumbnail(for: item.id)
@@ -135,34 +135,19 @@ struct ReviewView: View {
 
     @ViewBuilder
     private func viewerActions(_ item: FlaggedItem) -> some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 10) {
-                Button {
-                    Task { await state.addToPrivateAlbum(item) }
-                } label: {
-                    Label("加入隐私相册", systemImage: "lock.shield")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button {
-                    state.markAsSafe(item)
-                } label: {
-                    Label("不处理", systemImage: "xmark.circle")
-                }
-                .buttonStyle(.bordered)
-            }
-
-            Menu {
-                Button("只删除系统相册原图", role: .destructive) {
-                    Task { await state.deleteOriginal(item) }
-                }
-                Button("加入隐私相册并删除原图", role: .destructive) {
-                    Task { await state.addToPrivateAlbumAndDeleteOriginal(item) }
-                }
+        HStack(spacing: 10) {
+            Button {
+                Task { await state.addToPrivateAlbum(item) }
             } label: {
-                Label("更多操作", systemImage: "ellipsis.circle")
+                Label("加入隐私相册", systemImage: "lock.shield")
                     .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+
+            Button(role: .destructive) {
+                Task { await state.deleteOriginal(item) }
+            } label: {
+                Label("删除", systemImage: "trash")
             }
             .buttonStyle(.bordered)
         }
@@ -185,6 +170,14 @@ struct ReviewView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(busy)
 
+                Button(role: .destructive) {
+                    Task { await batchDeleteOriginals() }
+                } label: {
+                    Label("批量删除", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                .disabled(busy)
+
                 Button {
                     batchIgnore()
                 } label: {
@@ -192,21 +185,8 @@ struct ReviewView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(busy)
-
-                Menu {
-                    Button("批量删除原图", role: .destructive) {
-                        Task { await batchDeleteOriginals() }
-                    }
-                    Button("批量加入并删除原图", role: .destructive) {
-                        Task { await batchAddAndDelete() }
-                    }
-                } label: {
-                    Label("更多", systemImage: "ellipsis.circle")
-                }
-                .buttonStyle(.bordered)
-                .disabled(busy)
             }
-            Text("“加入隐私相册”只加密存副本，系统相册原图不动；删除才会动原图；“不处理”两张都不动，只是从列表里收走。")
+            Text("加入隐私相册 = 移进系统相册的「已隐藏」（Face ID 保护）；删除 = 从系统相册移除；不处理 = 什么都不做。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -232,14 +212,6 @@ struct ReviewView: View {
     private func batchDeleteOriginals() async {
         busy = true
         await state.deleteOriginals(selectedItems())
-        busy = false
-        selection = []
-        selecting = false
-    }
-
-    private func batchAddAndDelete() async {
-        busy = true
-        await state.addToPrivateAlbumAndDeleteOriginals(selectedItems())
         busy = false
         selection = []
         selecting = false

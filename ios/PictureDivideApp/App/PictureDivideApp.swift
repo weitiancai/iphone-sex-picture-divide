@@ -50,8 +50,8 @@ struct RootView: View {
                 .badge(state.flagged.filter { $0.state == .pending }.count)
                 .tag(1)
 
-            VaultView()
-                .tabItem { Label("保险箱", systemImage: "lock.shield") }
+            PrivacyAlbumView()
+                .tabItem { Label("隐私相册", systemImage: "folder.fill.badge.person.crop") }
                 .tag(2)
 
             SettingsView()
