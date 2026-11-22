@@ -221,6 +221,9 @@ enum PhotoLibrary {
         guard let collection = album(named: title) else { return [] }
         let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+        if #available(iOS 27.0, *) {
+            options.includeHiddenAssets = true   // 已隐藏的也要能看到（否则隐藏后就从列表消失了）
+        }
         var result: [PHAsset] = []
         PHAsset.fetchAssets(in: collection, options: options).enumerateObjects { asset, _, _ in
             result.append(asset)
@@ -311,13 +314,24 @@ enum PhotoLibrary {
 
     /// 判断某个资源当前是否在「已隐藏」里。
     static func isHidden(_ asset: PHAsset) -> Bool {
+        if #available(iOS 27.0, *) {
+            return asset.isHidden          // 公开 API
+        }
+        // iOS 26 及以下：私有入口（实测可用）
         guard asset.responds(to: NSSelectorFromString("isHidden")) else { return false }
         return (asset.value(forKey: "hidden") as? NSNumber)?.boolValue ?? false
     }
 
     /// 列出系统「已隐藏」里的照片。
+    ///
+    /// 注意：iOS 起系统**默认不返回已隐藏资源**，iOS 27 提供了公开开关
+    /// `PHFetchOptions.includeHiddenAssets`；旧系统只能靠逐个查 isHidden（多半查不到）。
     static func hiddenAssets() -> [PHAsset] {
-        let result = PHAsset.fetchAssets(with: .image, options: nil)
+        let options = PHFetchOptions()
+        if #available(iOS 27.0, *) {
+            options.includeHiddenAssets = true
+        }
+        let result = PHAsset.fetchAssets(with: .image, options: options)
         var hidden: [PHAsset] = []
         result.enumerateObjects { asset, _, _ in
             if isHidden(asset) { hidden.append(asset) }

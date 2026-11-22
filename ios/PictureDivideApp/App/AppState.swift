@@ -92,6 +92,37 @@ final class AppState: ObservableObject {
            let value = ScanPolicy(rawValue: args[index + 1]) {
             policy = value
         }
+        // 自检：--ios27-test 在 iOS 27 上验证「公开 API 隐藏 / 读回 / 标签」是否全部可用。
+        if args.contains("--ios27-test") {
+            Task { @MainActor in
+                NSLog("[ios27] 系统版本: %@", UIDevice.current.systemVersion)
+                let assets = PHAsset.fetchAssets(with: .image, options: nil)
+                guard let asset = assets.firstObject else {
+                    NSLog("[ios27] 图库是空的"); return
+                }
+                let id = asset.localIdentifier
+                if #available(iOS 27.0, *) {
+                    NSLog("[ios27] 公开 API 可用 ✓（isHidden / addKeyword / includeHiddenAssets）")
+                    do {
+                        try await PhotoLibrary.setHiddenPublic(true, for: asset)
+                        let readBack = PhotoLibrary.isHidden(asset)
+                        NSLog("[ios27] 隐藏后 isHidden=%@", readBack ? "YES" : "NO")
+                        let tagged = (try? await PhotoLibrary.addKeyword("隐私", to: asset)) ?? false
+                        NSLog("[ios27] 打标签=%@ 关键词=%@", tagged ? "成功" : "失败", PhotoLibrary.keywords(of: asset))
+                        let hiddenList = PhotoLibrary.hiddenAssets()
+                        NSLog("[ios27] 系统已隐藏列表 %d 张", hiddenList.count)
+                        // 还原
+                        try await PhotoLibrary.setHiddenPublic(false, for: asset)
+                        NSLog("[ios27] 已还原 isHidden=%@", PhotoLibrary.isHidden(asset) ? "YES" : "NO")
+                    } catch {
+                        NSLog("[ios27] 失败: %@", error.localizedDescription)
+                    }
+                } else {
+                    NSLog("[ios27] 当前系统没有公开 API（需要 iOS 27）")
+                }
+            }
+        }
+
         // 调试/自动化用：启动参数 --autoscan 会自动开扫，方便命令行验证。
         if args.contains("--autoscan") {
             if authorization == .notDetermined {
@@ -354,12 +385,15 @@ final class AppState: ObservableObject {
             // 先归入系统相簿（所有系统版本都支持，也是用户后续整册隐藏的抓手）
             try await PhotoLibrary.addToAlbum([asset], albumTitle: albumTitle)
 
-            // iOS 27+ 还能直接设成「已隐藏」+ 打标签
+            // iOS 27+ 用公开 API：直接设成「已隐藏」+ 打上「隐私」标签
             var hiddenDirectly = false
             var tagged = false
             if #available(iOS 27.0, *) {
                 hiddenDirectly = (try? await PhotoLibrary.setHiddenPublic(true, for: asset)) ?? false
                 tagged = (try? await PhotoLibrary.addKeyword("隐私", to: asset)) ?? false
+                if hiddenDirectly {
+                    // 已经是公开 API 隐藏的，相簿里就不必再留一份；但留着方便用户找回来。
+                }
             }
 
             toast = hiddenDirectly
